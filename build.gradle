@@ -3,8 +3,8 @@ plugins {
     id 'maven-publish'
 }
 
-group = 'net.easecation'
-archivesBaseName = 'bedrock-motion'
+group = 'com.github.EaseCation'
+base.archivesName = 'BedrockMotion'
 version = '1.0.0'
 
 java {
@@ -35,8 +35,8 @@ publishing {
     publications {
         mavenJava(MavenPublication) {
             from components.java
-            groupId = 'net.easecation'
-            artifactId = 'bedrock-motion'
+            groupId = 'com.github.EaseCation'
+            artifactId = 'BedrockMotion'
         }
     }
 }
