@@ -50,6 +50,8 @@ public class AnimationControllerInstance {
     @Setter
     private float controllerBlendWeight = 1.0f;
 
+    private final LayeredScope reusableTransitionScope = new LayeredScope(Scope.create());
+
     // Per-tick cached base weights and incoming factor (used by shortest-path two-pass in animate())
     private final Map<String, Float> currentBaseWeights = new HashMap<>();
     private float lastIncomingFactor = 1.0f;
@@ -160,7 +162,8 @@ public class AnimationControllerInstance {
             }
         }
 
-        final LayeredScope scope = new LayeredScope(frameScope);
+        reusableTransitionScope.reset(frameScope);
+        final LayeredScope scope = reusableTransitionScope;
         final OverlayBinding queryBinding = new OverlayBinding(
                 (MutableObjectBinding) frameScope.get("query"));
         queryBinding.set("any_animation_finished", Value.of(anyFinished ? 1.0 : 0.0));

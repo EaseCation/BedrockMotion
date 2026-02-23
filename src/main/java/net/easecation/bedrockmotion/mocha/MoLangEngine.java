@@ -35,6 +35,8 @@ import java.util.concurrent.ConcurrentHashMap;
 public class MoLangEngine {
     private static final ConcurrentHashMap<String, List<Expression>> PARSE_CACHE = new ConcurrentHashMap<>();
     private static final int MAX_CACHE_SIZE = 4096;
+    private static final ThreadLocal<LayeredScope> EVAL_SCOPE =
+            ThreadLocal.withInitial(() -> new LayeredScope(Scope.create()));
 
     public static Value eval(final Scope scope, final String expression) throws IOException {
         if (expression == null || expression.isEmpty()) {
@@ -55,7 +57,8 @@ public class MoLangEngine {
     }
 
     public static Value eval(final Scope scope, final List<Expression> expressions) {
-        final LayeredScope localScope = new LayeredScope(scope);
+        final LayeredScope localScope = EVAL_SCOPE.get();
+        localScope.reset(scope);
         final MutableObjectBinding tempBinding = new MutableObjectBinding();
         localScope.set("temp", tempBinding);
         localScope.set("t", tempBinding);

@@ -30,9 +30,11 @@ public class Animator {
     private boolean donePlaying, started, firstPlay;
 
     private final Vector3f TEMP_VEC = new Vector3f();
+    private final LayeredScope reusableScope = new LayeredScope(Scope.create());
 
-    // Lazily-built bone name -> IBoneTarget index per IBoneModel, avoiding O(N) linear scan
-    private final Map<IBoneModel, Map<String, IBoneTarget>> boneIndexCache = new HashMap<>(2);
+    // Single-instance bone index cache (avoids O(N) linear scan per animate() call)
+    private IBoneModel cachedModel;
+    private Map<String, IBoneTarget> cachedBoneIndex;
 
     @Setter
     private Scope baseScope;
@@ -67,7 +69,8 @@ public class Animator {
 
         // baseScope already contains complete query bindings from buildFrameScope().
         // Only overlay animation-specific anim_time/life_time.
-        final Scope scope = new LayeredScope(this.baseScope);
+        reusableScope.reset(this.baseScope);
+        final Scope scope = reusableScope;
 
         if (!this.started) {
             boolean skipThisTick = true;
@@ -103,16 +106,20 @@ public class Animator {
         scope.set("query", animQueryBinding);
         scope.set("q", animQueryBinding);
 
-        Map<String, IBoneTarget> boneIndex = this.boneIndexCache.computeIfAbsent(model, m -> {
-            Map<String, IBoneTarget> index = new HashMap<>();
-            for (IBoneTarget bone : m.getAllBones()) {
+        Map<String, IBoneTarget> boneIndex;
+        if (model == cachedModel && cachedBoneIndex != null) {
+            boneIndex = cachedBoneIndex;
+        } else {
+            boneIndex = new HashMap<>();
+            for (IBoneTarget bone : model.getAllBones()) {
                 String name = bone.getName();
                 if (name != null) {
-                    index.putIfAbsent(name.toLowerCase(Locale.ROOT), bone);
+                    boneIndex.putIfAbsent(name.toLowerCase(Locale.ROOT), bone);
                 }
             }
-            return index;
-        });
+            cachedModel = model;
+            cachedBoneIndex = boneIndex;
+        }
 
         AnimationHelper.animate(scope, model, data.compiled(), System.currentTimeMillis() - this.animationStartMS, this.blendWeight, TEMP_VEC, boneIndex);
 

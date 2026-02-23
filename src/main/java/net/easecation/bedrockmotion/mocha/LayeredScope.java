@@ -14,13 +14,22 @@ import java.util.Map;
  */
 @SuppressWarnings("UnstableApiUsage")
 public class LayeredScope implements Scope {
-    private final Scope parent;
+    private Scope parent;
     private final Map<String, ObjectProperty> local;
     private boolean readOnly;
 
     public LayeredScope(Scope parent) {
         this.parent = parent;
         this.local = new HashMap<>(4);
+    }
+
+    /**
+     * Resets this scope for reuse with a new parent, avoiding new allocation.
+     */
+    public void reset(Scope newParent) {
+        this.parent = newParent;
+        this.local.clear();
+        this.readOnly = false;
     }
 
     @Override
