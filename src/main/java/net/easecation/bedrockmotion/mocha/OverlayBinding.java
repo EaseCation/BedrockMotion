@@ -11,10 +11,20 @@ import team.unnamed.mocha.runtime.value.ObjectValue;
  */
 @SuppressWarnings("UnstableApiUsage")
 public class OverlayBinding extends MutableObjectBinding {
-    private final ObjectValue parent;
+    private ObjectValue parent;
 
     public OverlayBinding(ObjectValue parent) {
         this.parent = parent;
+    }
+
+    /**
+     * Resets the parent binding for reuse, avoiding per-frame allocation.
+     * Local overrides (set via {@link #set}) are retained and overwritten
+     * on next set() — since the same keys are always used (e.g. anim_time,
+     * life_time), this is safe and avoids needing a clear() method.
+     */
+    public void reset(ObjectValue newParent) {
+        this.parent = newParent;
     }
 
     @Override

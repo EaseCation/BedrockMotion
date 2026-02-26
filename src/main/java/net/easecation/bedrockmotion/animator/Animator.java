@@ -17,9 +17,7 @@ import team.unnamed.mocha.runtime.value.MutableObjectBinding;
 import team.unnamed.mocha.runtime.value.Value;
 
 import java.io.IOException;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 
 public class Animator {
@@ -32,10 +30,7 @@ public class Animator {
 
     private final Vector3f TEMP_VEC = new Vector3f();
     private final LayeredScope reusableScope = new LayeredScope(Scope.create());
-
-    // Single-instance bone index cache (avoids O(N) linear scan per animate() call)
-    private IBoneModel cachedModel;
-    private Map<String, IBoneTarget> cachedBoneIndex;
+    private final OverlayBinding reusableOverlay = new OverlayBinding(null);
 
     @Setter
     private Scope baseScope;
@@ -99,28 +94,15 @@ public class Animator {
         float runningTime = AnimationHelper.getRunningSeconds(data.animation(), data.compiled(), System.currentTimeMillis() - this.animationStartMS);
 
         // Override life_time and anim_time with animation-specific values (not entity lifetime)
-        // Use OverlayBinding to avoid expensive setAllFrom() copy
-        final OverlayBinding animQueryBinding = new OverlayBinding(
-                (MutableObjectBinding) this.baseScope.get("query"));
-        animQueryBinding.set("anim_time", Value.of(runningTime));
-        animQueryBinding.set("life_time", Value.of(runningTime));
-        scope.set("query", animQueryBinding);
-        scope.set("q", animQueryBinding);
+        // Reuse OverlayBinding instance to avoid per-frame allocation
+        reusableOverlay.reset((MutableObjectBinding) this.baseScope.get("query"));
+        reusableOverlay.set("anim_time", Value.of(runningTime));
+        reusableOverlay.set("life_time", Value.of(runningTime));
+        scope.set("query", reusableOverlay);
+        scope.set("q", reusableOverlay);
 
-        Map<String, IBoneTarget> boneIndex;
-        if (model == cachedModel && cachedBoneIndex != null) {
-            boneIndex = cachedBoneIndex;
-        } else {
-            boneIndex = new HashMap<>();
-            for (IBoneTarget bone : model.getAllBones()) {
-                String name = bone.getName();
-                if (name != null) {
-                    boneIndex.putIfAbsent(name.toLowerCase(Locale.ROOT), bone);
-                }
-            }
-            cachedModel = model;
-            cachedBoneIndex = boneIndex;
-        }
+        // Use IBoneModel's own lazily-built bone index (cached permanently by McBoneModel)
+        Map<String, IBoneTarget> boneIndex = model.getBoneIndex();
 
         AnimationHelper.animate(scope, model, data.compiled(), System.currentTimeMillis() - this.animationStartMS, this.blendWeight, TEMP_VEC, boneIndex);
 

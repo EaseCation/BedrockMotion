@@ -51,6 +51,7 @@ public class AnimationControllerInstance {
     private float controllerBlendWeight = 1.0f;
 
     private final LayeredScope reusableTransitionScope = new LayeredScope(Scope.create());
+    private final OverlayBinding reusableTransitionOverlay = new OverlayBinding(null);
 
     // Per-tick cached base weights and incoming factor (used by shortest-path two-pass in animate())
     private final Map<String, Float> currentBaseWeights = new HashMap<>();
@@ -164,16 +165,16 @@ public class AnimationControllerInstance {
 
         reusableTransitionScope.reset(frameScope);
         final LayeredScope scope = reusableTransitionScope;
-        final OverlayBinding queryBinding = new OverlayBinding(
-                (MutableObjectBinding) frameScope.get("query"));
-        queryBinding.set("any_animation_finished", Value.of(anyFinished ? 1.0 : 0.0));
-        queryBinding.set("all_animations_finished", Value.of(allFinished ? 1.0 : 0.0));
+        // Reuse OverlayBinding instance to avoid per-frame allocation
+        reusableTransitionOverlay.reset((MutableObjectBinding) frameScope.get("query"));
+        reusableTransitionOverlay.set("any_animation_finished", Value.of(anyFinished ? 1.0 : 0.0));
+        reusableTransitionOverlay.set("all_animations_finished", Value.of(allFinished ? 1.0 : 0.0));
 
         final float stateTime = (System.currentTimeMillis() - stateEnteredMS) / 1000f;
-        queryBinding.set("anim_time", Value.of(stateTime));
+        reusableTransitionOverlay.set("anim_time", Value.of(stateTime));
 
-        scope.set("query", queryBinding);
-        scope.set("q", queryBinding);
+        scope.set("query", reusableTransitionOverlay);
+        scope.set("q", reusableTransitionOverlay);
         return scope;
     }
 
