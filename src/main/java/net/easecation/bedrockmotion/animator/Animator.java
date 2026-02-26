@@ -2,6 +2,7 @@ package net.easecation.bedrockmotion.animator;
 
 import lombok.Getter;
 import lombok.Setter;
+import net.easecation.bedrockmotion.animation.Animation;
 import net.easecation.bedrockmotion.animation.vanilla.AnimationHelper;
 import net.easecation.bedrockmotion.model.AnimationEventListener;
 import net.easecation.bedrockmotion.model.IBoneModel;
@@ -125,6 +126,7 @@ public class Animator {
 
         float runningTimeWithoutLoop = (System.currentTimeMillis() - this.animationStartMS) / 1000F;
         this.tickTimeline(runningTimeWithoutLoop);
+        this.tickParticleEffects(runningTimeWithoutLoop);
 
         if (data.compiled().lengthInSeconds() > 0 && runningTimeWithoutLoop >= data.compiled().lengthInSeconds()) {
             this.stop();
@@ -155,6 +157,35 @@ public class Animator {
                 && (nextTimestamp == null || nextTimestamp > runningTime)
                 && Math.abs(candidate.getKey() - runningTime) < 0.005F) {
             this.listener.onTimelineEvent(candidate.getValue());
+        }
+    }
+
+    private void tickParticleEffects(float runningTime) {
+        final Map<Float, List<Animation.ParticleKeyframe>> effects = this.data.animation().getParticleEffects();
+        if (effects.isEmpty()) {
+            return;
+        }
+
+        Float nextTimestamp = null;
+        Map.Entry<Float, List<Animation.ParticleKeyframe>> candidate = null;
+
+        for (Map.Entry<Float, List<Animation.ParticleKeyframe>> entry : effects.entrySet()) {
+            float timestamp = entry.getKey();
+            if (timestamp > runningTime) {
+                nextTimestamp = timestamp;
+                break;
+            }
+            if (!entry.getValue().isEmpty()) {
+                candidate = entry;
+            }
+        }
+
+        if (candidate != null
+                && (nextTimestamp == null || nextTimestamp > runningTime)
+                && Math.abs(candidate.getKey() - runningTime) < 0.005F) {
+            for (Animation.ParticleKeyframe kf : candidate.getValue()) {
+                this.listener.onParticleEvent(kf.effect(), kf.locator());
+            }
         }
     }
 

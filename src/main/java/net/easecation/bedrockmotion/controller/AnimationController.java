@@ -64,16 +64,19 @@ public class AnimationController {
         private final List<Transition> transitions;
         private final List<String> onEntry;
         private final List<String> onExit;
+        private final List<ParticleEffect> particleEffects;
         private final BlendTransitionCurve blendTransitionCurve;
         private final boolean blendViaShortestPath;
 
         public State(List<StateAnimation> animations, List<Transition> transitions,
                      List<String> onEntry, List<String> onExit,
+                     List<ParticleEffect> particleEffects,
                      BlendTransitionCurve blendTransitionCurve, boolean blendViaShortestPath) {
             this.animations = animations;
             this.transitions = transitions;
             this.onEntry = onEntry;
             this.onExit = onExit;
+            this.particleEffects = particleEffects;
             this.blendTransitionCurve = blendTransitionCurve;
             this.blendViaShortestPath = blendViaShortestPath;
         }
@@ -121,8 +124,23 @@ public class AnimationController {
             final boolean blendViaShortestPath = obj.has("blend_via_shortest_path")
                     && obj.get("blend_via_shortest_path").getAsBoolean();
 
+            // Parse particle_effects: [{"effect": "short_name", "locator": "bone"}]
+            final List<ParticleEffect> particleEffects = new ArrayList<>();
+            final JsonArray particleArray = obj.getAsJsonArray("particle_effects");
+            if (particleArray != null) {
+                for (JsonElement elem : particleArray) {
+                    if (elem.isJsonObject()) {
+                        final JsonObject peObj = elem.getAsJsonObject();
+                        String effect = peObj.has("effect") ? peObj.get("effect").getAsString() : "";
+                        String locator = peObj.has("locator") ? peObj.get("locator").getAsString() : "";
+                        String preEffect = peObj.has("pre_effect_script") ? peObj.get("pre_effect_script").getAsString() : "";
+                        particleEffects.add(new ParticleEffect(effect, locator, preEffect));
+                    }
+                }
+            }
+
             return new State(animations, transitions, onEntry, onExit,
-                    blendTransitionCurve, blendViaShortestPath);
+                    particleEffects, blendTransitionCurve, blendViaShortestPath);
         }
 
         private static List<String> parseStringArray(JsonArray array) {
@@ -142,4 +160,6 @@ public class AnimationController {
     public record StateAnimation(String shortName, String blendWeightExpression) {}
 
     public record Transition(String targetState, String condition) {}
+
+    public record ParticleEffect(String effect, String locator, String preEffectExpression) {}
 }

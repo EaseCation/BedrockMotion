@@ -361,6 +361,11 @@ public class AnimationControllerInstance {
         }
 
         executeScripts(currentState.getOnEntry(), scope);
+
+        // Trigger particle effects defined on this state
+        for (AnimationController.ParticleEffect pe : currentState.getParticleEffects()) {
+            listener.onParticleEvent(pe.effect(), pe.locator());
+        }
     }
 
     private void executeScripts(List<String> scripts, Scope scope) {

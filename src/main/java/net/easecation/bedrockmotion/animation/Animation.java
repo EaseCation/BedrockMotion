@@ -30,6 +30,9 @@ public class Animation {
     private float animationLength = -1;
     private final List<Cube> cubes = new ArrayList<>();
     private final Map<Float, List<String>> timeline = new TreeMap<>();
+    private final Map<Float, List<ParticleKeyframe>> particleEffects = new TreeMap<>();
+
+    public record ParticleKeyframe(String effect, String locator, String preEffectExpression) {}
 
     public static List<Animation> parse(final JsonObject object) {
         final JsonObject animationsList = object.getAsJsonObject("animations");
@@ -90,6 +93,32 @@ public class Animation {
                 }
             }
 
+            if (animationObject.has("particle_effects")) {
+                final JsonObject particleObj = animationObject.getAsJsonObject("particle_effects");
+                if (particleObj != null) {
+                    for (final String key : particleObj.keySet()) {
+                        if (!NumberUtils.isCreatable(key)) {
+                            continue;
+                        }
+                        float timestamp = Float.parseFloat(key);
+                        final JsonElement el = particleObj.get(key);
+                        final List<ParticleKeyframe> keyframes = new ArrayList<>();
+                        if (el.isJsonObject()) {
+                            keyframes.add(parseParticleKeyframe(el.getAsJsonObject()));
+                        } else if (el.isJsonArray()) {
+                            for (JsonElement item : el.getAsJsonArray()) {
+                                if (item.isJsonObject()) {
+                                    keyframes.add(parseParticleKeyframe(item.getAsJsonObject()));
+                                }
+                            }
+                        }
+                        if (!keyframes.isEmpty()) {
+                            animation.getParticleEffects().put(timestamp, keyframes);
+                        }
+                    }
+                }
+            }
+
             if (!animationObject.has("bones")) {
                 animations.add(animation);
                 continue;
@@ -100,5 +129,12 @@ public class Animation {
         }
 
         return animations;
+    }
+
+    private static ParticleKeyframe parseParticleKeyframe(JsonObject obj) {
+        String effect = obj.has("effect") ? obj.get("effect").getAsString() : "";
+        String locator = obj.has("locator") ? obj.get("locator").getAsString() : "";
+        String preEffect = obj.has("pre_effect_script") ? obj.get("pre_effect_script").getAsString() : "";
+        return new ParticleKeyframe(effect, locator, preEffect);
     }
 }

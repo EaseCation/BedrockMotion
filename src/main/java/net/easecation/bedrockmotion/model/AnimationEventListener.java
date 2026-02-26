@@ -17,6 +17,13 @@ public interface AnimationEventListener {
     void onTimelineEvent(List<String> expressions);
 
     /**
+     * Called when an animation particle_effects keyframe fires.
+     * @param effectShortName the short name alias defined in entity description.particle_effects
+     * @param locator the bone/locator name where the particle should spawn
+     */
+    default void onParticleEvent(String effectShortName, String locator) {}
+
+    /**
      * Returns the entity-level MoLang scope containing variable bindings.
      * Used by AnimationControllerInstance to initialize state on construction.
      */
