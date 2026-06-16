@@ -14,9 +14,10 @@ repositories {
 
 dependencies {
     api 'team.unnamed:mocha:3.0.1'
-    api('com.github.EaseCation:CubeConverter:1.3') {
-        transitive = false
-    }
+    // 不再 transitive=false:需要让 CubeConverter 的 compileOnlyApi(ViaProxy 侧 relocated gson)
+    // 透传到本工程 compile classpath,以解析其解析器重载签名。CubeConverter 仅 compileOnlyApi 会传递
+    // (其余为 implementation,不外泄;plain 分支无 api 依赖),不影响运行期与 NeoForge。
+    api('com.github.EaseCation:CubeConverter:1.3')
     api 'org.joml:joml:1.10.8'
     implementation 'com.google.code.gson:gson:2.13.2'
     implementation 'org.apache.commons:commons-lang3:3.17.0'

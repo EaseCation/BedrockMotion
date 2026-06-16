@@ -1,7 +1,8 @@
 package net.easecation.bedrockmotion.pack.content;
 
+import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
 import com.google.gson.JsonObject;
-import org.cube.converter.util.GsonUtil;
 
 import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
@@ -18,6 +19,12 @@ import java.util.zip.ZipOutputStream;
 
 // Taken from ViaBedrock!
 public class Content {
+    // Own plain-gson instance instead of CubeConverter's GsonUtil.getGson(). CubeConverter ships in
+    // two gson flavors (plain on NeoForge, ViaVersion-relocated on the ViaProxy classpath), so binding
+    // to its getGson() return type caused a NoSuchMethodError at runtime when the relocated variant was
+    // loaded. Using our own Gson keeps Content gson-flavor-agnostic toward CubeConverter.
+    private static final Gson GSON = new GsonBuilder().create();
+
     private final Map<String, byte[]> content;
     private final Map<String, Map<String, String>> langCache;
 
@@ -131,11 +138,11 @@ public class Content {
             return null;
         }
 
-        return GsonUtil.getGson().fromJson(string.trim(), JsonObject.class);
+        return GSON.fromJson(string.trim(), JsonObject.class);
     }
 
     public boolean putJson(final String path, final JsonObject json) {
-        return this.putString(path, GsonUtil.getGson().toJson(json));
+        return this.putString(path, GSON.toJson(json));
     }
 
     public LazyImage getShortnameImage(final String path) {
