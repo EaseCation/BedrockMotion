@@ -37,6 +37,13 @@ public class MoLangEngine {
     private static final int MAX_CACHE_SIZE = 4096;
     private static final ThreadLocal<LayeredScope> EVAL_SCOPE =
             ThreadLocal.withInitial(() -> new LayeredScope(Scope.create()));
+    // Reused per thread instead of allocating a new MutableObjectBinding (and its backing
+    // CaseInsensitiveStringHashMap) on every eval(List) call - that allocation dominated render-thread
+    // GC pressure once keyframe pre-resolution removed the parse churn. MutableObjectBinding has no
+    // clear() and is package-final on its map, so this subclass tracks written temp keys and removes
+    // them after each eval, keeping the (empty in the common case) map allocated and reused.
+    private static final ThreadLocal<ResettableTempBinding> EVAL_TEMP =
+            ThreadLocal.withInitial(ResettableTempBinding::new);
 
     public static Value eval(final Scope scope, final String expression) throws IOException {
         if (expression == null || expression.isEmpty()) {
@@ -59,7 +66,8 @@ public class MoLangEngine {
     public static Value eval(final Scope scope, final List<Expression> expressions) {
         final LayeredScope localScope = EVAL_SCOPE.get();
         localScope.reset(scope);
-        final MutableObjectBinding tempBinding = new MutableObjectBinding();
+        final ResettableTempBinding tempBinding = EVAL_TEMP.get();
+        tempBinding.resetTemp(); // drop any temp.* written by a previous eval before reuse
         localScope.set("temp", tempBinding);
         localScope.set("t", tempBinding);
         localScope.readOnly(true);
@@ -78,6 +86,31 @@ public class MoLangEngine {
         }
 
         return lastResult;
+    }
+
+    /**
+     * A reusable {@code temp}/{@code t} binding for {@link #eval(Scope, List)}. {@link MutableObjectBinding}
+     * exposes no clear(), so we record the keys a script writes and remove them after each eval, reusing the
+     * binding (and its backing map) across calls instead of allocating a fresh one every time.
+     */
+    private static final class ResettableTempBinding extends MutableObjectBinding {
+        private final java.util.ArrayList<String> writtenKeys = new java.util.ArrayList<>(4);
+
+        @Override
+        public boolean set(final String name, final Value value) {
+            final boolean result = super.set(name, value);
+            if (result && value != null) {
+                writtenKeys.add(name);
+            }
+            return result;
+        }
+
+        void resetTemp() {
+            for (int i = 0, n = writtenKeys.size(); i < n; i++) {
+                super.set(writtenKeys.get(i), null);
+            }
+            writtenKeys.clear();
+        }
     }
 
     public static List<Expression> parse(final String expression) throws IOException {

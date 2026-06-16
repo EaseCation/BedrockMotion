@@ -4,9 +4,10 @@ import net.easecation.bedrockmotion.model.IBoneTarget;
 import net.easecation.bedrockmotion.mocha.MoLangEngine;
 import net.easecation.bedrockmotion.util.MathUtil;
 import org.joml.Vector3f;
+import team.unnamed.mocha.parser.ast.Expression;
 import team.unnamed.mocha.runtime.Scope;
 
-import java.io.IOException;
+import java.util.List;
 
 // Taken from vanilla Transformation, adapted for IBoneTarget.
 public record AnimateTransformation(Target target, VBUKeyFrame[] keyframes) {
@@ -16,14 +17,57 @@ public record AnimateTransformation(Target target, VBUKeyFrame[] keyframes) {
     private static final Vector3f TEMP_V2 = new Vector3f();
     private static final Vector3f TEMP_V3 = new Vector3f();
 
+    /**
+     * A keyframe component (x/y/z) resolved once at build time: either a constant double (the common
+     * case - literal numbers like "0", "30.5"), or a cached MoLang AST for genuine expressions. This
+     * lets per-frame evaluation read the constant directly (zero work, zero allocation) or evaluate the
+     * pre-parsed AST, instead of re-parsing the source string (and re-running Double.parseDouble) every
+     * frame for every bone/transform/keyframe - which dominated render-thread allocation in dense scenes.
+     */
+    public record ResolvedComponent(boolean constant, double value, List<Expression> expr) {
+        public static final ResolvedComponent ZERO = new ResolvedComponent(true, 0.0, null);
+
+        public static ResolvedComponent of(final String source) {
+            if (source == null || source.isEmpty()) {
+                return ZERO;
+            }
+            // Mirror MoLangEngine's numeric fast-path, but resolve it once instead of every eval.
+            final char first = source.charAt(0);
+            if ((first >= '0' && first <= '9') || first == '-' || first == '.') {
+                try {
+                    return new ResolvedComponent(true, Double.parseDouble(source), null);
+                } catch (NumberFormatException ignored) {
+                    // not a pure number, fall through to AST
+                }
+            }
+            try {
+                return new ResolvedComponent(false, 0.0, MoLangEngine.parse(source));
+            } catch (Exception e) {
+                return ZERO;
+            }
+        }
+    }
+
+    /** Resolve an xyz source array into per-component constants/ASTs once at build time. */
+    public static ResolvedComponent[] resolve(final String[] xyz) {
+        if (xyz == null) {
+            return new ResolvedComponent[]{ResolvedComponent.ZERO, ResolvedComponent.ZERO, ResolvedComponent.ZERO};
+        }
+        final ResolvedComponent[] out = new ResolvedComponent[xyz.length];
+        for (int i = 0; i < xyz.length; i++) {
+            out[i] = ResolvedComponent.of(xyz[i]);
+        }
+        return out;
+    }
+
     public static class Interpolations {
         public static final Interpolation LINEAR = (scope, dest, delta, keyframes, start, end, scale) -> {
-            eval(scope, keyframes[start].postTarget(), TEMP_V1);
-            eval(scope, keyframes[end].preTarget(), TEMP_V2);
+            eval(scope, keyframes[start].post(), TEMP_V1);
+            eval(scope, keyframes[end].pre(), TEMP_V2);
             return TEMP_V1.lerp(TEMP_V2, delta, dest).mul(scale);
         };
         public static final Interpolation STEP = (scope, dest, delta, keyframes, start, end, scale) -> {
-            eval(scope, keyframes[start].postTarget(), dest);
+            eval(scope, keyframes[start].post(), dest);
             dest.mul(scale);
             return dest;
         };
@@ -32,15 +76,15 @@ public record AnimateTransformation(Target target, VBUKeyFrame[] keyframes) {
             boolean hasBefore = start > 0 && !keyframes[start].hasSeparatePrePost();
             boolean hasAfter = end < keyframes.length - 1 && !keyframes[end].hasSeparatePrePost();
 
-            eval(scope, keyframes[start].postTarget(), TEMP_V1);
-            eval(scope, keyframes[end].preTarget(), TEMP_V2);
+            eval(scope, keyframes[start].post(), TEMP_V1);
+            eval(scope, keyframes[end].pre(), TEMP_V2);
             if (hasBefore) {
-                eval(scope, keyframes[start - 1].postTarget(), TEMP_V0);
+                eval(scope, keyframes[start - 1].post(), TEMP_V0);
             } else {
                 TEMP_V0.set(TEMP_V1);
             }
             if (hasAfter) {
-                eval(scope, keyframes[end + 1].preTarget(), TEMP_V3);
+                eval(scope, keyframes[end + 1].pre(), TEMP_V3);
             } else {
                 TEMP_V3.set(TEMP_V2);
             }
@@ -54,16 +98,18 @@ public record AnimateTransformation(Target target, VBUKeyFrame[] keyframes) {
         };
     }
 
-    private static void eval(Scope scope, String[] molang3, Vector3f dest) {
+    private static void eval(Scope scope, ResolvedComponent[] xyz, Vector3f dest) {
+        dest.set(evalComponent(scope, xyz[0]), evalComponent(scope, xyz[1]), evalComponent(scope, xyz[2]));
+    }
+
+    private static float evalComponent(Scope scope, ResolvedComponent component) {
+        if (component.constant()) {
+            return (float) component.value();
+        }
         try {
-            dest.set(
-                    (float) MoLangEngine.eval(scope, molang3[0]).getAsNumber(),
-                    (float) MoLangEngine.eval(scope, molang3[1]).getAsNumber(),
-                    (float) MoLangEngine.eval(scope, molang3[2]).getAsNumber()
-            );
-        } catch (IOException e) {
-            e.printStackTrace();
-            dest.set(0, 0, 0);
+            return (float) MoLangEngine.eval(scope, component.expr()).getAsNumber();
+        } catch (Exception e) {
+            return 0.0F;
         }
     }
 
