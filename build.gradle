@@ -12,6 +12,12 @@ repositories {
     maven { url 'https://jitpack.io' }
 }
 
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
 dependencies {
     api 'team.unnamed:mocha:3.0.1'
     // 不再 transitive=false:需要让 CubeConverter 的 compileOnlyApi(ViaProxy 侧 relocated gson)
