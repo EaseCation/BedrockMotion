@@ -81,7 +81,11 @@ public class AnimateBuilder {
     }
 
     @SuppressWarnings("unchecked")
-    private static void build(final VBUAnimation.Builder builder, final String name, final Target target, final Object object) {
+    private static void build(final VBUAnimation.Builder builder, String name, final Target target, final Object object) {
+        // Normalize the bone name to lowercase at build time. Bedrock bone names are case-insensitive,
+        // and AnimationHelper.animate looks them up via IBoneModel.getBoneIndex() (contract: lowercase
+        // keys) — so this avoids a per-bone-per-frame toLowerCase at query time.
+        name = name.toLowerCase(Locale.ROOT);
         if (object instanceof TreeMap<?, ?> rawMap) {
             if (rawMap.isEmpty()) {
                 return;

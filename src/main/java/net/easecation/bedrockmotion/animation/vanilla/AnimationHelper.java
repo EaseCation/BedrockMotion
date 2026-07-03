@@ -8,7 +8,6 @@ import org.joml.Vector3f;
 import team.unnamed.mocha.runtime.Scope;
 
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 
 public class AnimationHelper {
@@ -18,7 +17,9 @@ public class AnimationHelper {
         Map<String, IBoneTarget> index = boneIndex != null ? boneIndex : model.getBoneIndex();
 
         for (Map.Entry<String, List<AnimateTransformation>> entry : animation.boneAnimations().entrySet()) {
-            IBoneTarget bone = index.get(entry.getKey().toLowerCase(Locale.ROOT));
+            // Both the animation's bone keys (lowercased at build time in AnimateBuilder) and the
+            // IBoneModel index keys (lowercased by contract) are normalized, so no per-frame toLowerCase.
+            IBoneTarget bone = index.get(entry.getKey());
             if (bone == null) {
                 continue;
             }

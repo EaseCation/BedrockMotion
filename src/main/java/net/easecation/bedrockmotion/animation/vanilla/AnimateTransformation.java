@@ -4,8 +4,13 @@ import net.easecation.bedrockmotion.model.IBoneTarget;
 import net.easecation.bedrockmotion.mocha.MoLangEngine;
 import net.easecation.bedrockmotion.util.MathUtil;
 import org.joml.Vector3f;
+import team.unnamed.mocha.parser.ast.AccessExpression;
 import team.unnamed.mocha.parser.ast.Expression;
+import team.unnamed.mocha.parser.ast.IdentifierExpression;
 import team.unnamed.mocha.runtime.Scope;
+import team.unnamed.mocha.runtime.value.ObjectProperty;
+import team.unnamed.mocha.runtime.value.ObjectValue;
+import team.unnamed.mocha.runtime.value.Value;
 
 import java.util.List;
 
@@ -24,8 +29,8 @@ public record AnimateTransformation(Target target, VBUKeyFrame[] keyframes) {
      * pre-parsed AST, instead of re-parsing the source string (and re-running Double.parseDouble) every
      * frame for every bone/transform/keyframe - which dominated render-thread allocation in dense scenes.
      */
-    public record ResolvedComponent(boolean constant, double value, List<Expression> expr) {
-        public static final ResolvedComponent ZERO = new ResolvedComponent(true, 0.0, null);
+    public record ResolvedComponent(boolean constant, double value, List<Expression> expr, String queryVar) {
+        public static final ResolvedComponent ZERO = new ResolvedComponent(true, 0.0, null, null);
 
         public static ResolvedComponent of(final String source) {
             if (source == null || source.isEmpty()) {
@@ -35,16 +40,38 @@ public record AnimateTransformation(Target target, VBUKeyFrame[] keyframes) {
             final char first = source.charAt(0);
             if ((first >= '0' && first <= '9') || first == '-' || first == '.') {
                 try {
-                    return new ResolvedComponent(true, Double.parseDouble(source), null);
+                    return new ResolvedComponent(true, Double.parseDouble(source), null, null);
                 } catch (NumberFormatException ignored) {
                     // not a pure number, fall through to AST
                 }
             }
             try {
-                return new ResolvedComponent(false, 0.0, MoLangEngine.parse(source));
+                final List<Expression> ast = MoLangEngine.parse(source);
+                // Fast-path: a bare single query-variable access (e.g. "query.anim_time") is the most
+                // common non-constant keyframe. Reading it directly from the scope's query binding skips
+                // the whole ExpressionInterpreter (and its per-eval NumberValue/ObjectProperty allocations)
+                // — a major render-thread allocation source in dense entity scenes.
+                final String qv = extractSingleQueryVar(ast);
+                return new ResolvedComponent(false, 0.0, ast, qv);
             } catch (Exception e) {
                 return ZERO;
             }
+        }
+
+        /** If the AST is exactly one {@code query.xxx}/{@code q.xxx} access, return the property name; else null. */
+        private static String extractSingleQueryVar(final List<Expression> ast) {
+            if (ast == null || ast.size() != 1) {
+                return null;
+            }
+            final Expression e = ast.get(0);
+            if (e instanceof AccessExpression access
+                    && access.object() instanceof IdentifierExpression id) {
+                final String n = id.name();
+                if (("query".equals(n) || "q".equals(n)) && access.property() != null && !access.property().isEmpty()) {
+                    return access.property();
+                }
+            }
+            return null;
         }
     }
 
@@ -105,6 +132,22 @@ public record AnimateTransformation(Target target, VBUKeyFrame[] keyframes) {
     private static float evalComponent(Scope scope, ResolvedComponent component) {
         if (component.constant()) {
             return (float) component.value();
+        }
+        if (component.queryVar() != null) {
+            // Single query-variable fast-path: read directly from the scope's query binding instead of
+            // spinning up an ExpressionInterpreter (which allocates NumberValue/ObjectProperty per eval).
+            // Any failure falls through to the full eval below as a safety net.
+            try {
+                final Value query = scope.getProperty("query").value();
+                if (query instanceof ObjectValue ov) {
+                    final ObjectProperty prop = ov.getProperty(component.queryVar());
+                    if (prop != null) {
+                        return (float) prop.value().getAsNumber();
+                    }
+                }
+            } catch (Exception ignored) {
+                // fall through to full eval
+            }
         }
         try {
             return (float) MoLangEngine.eval(scope, component.expr()).getAsNumber();
