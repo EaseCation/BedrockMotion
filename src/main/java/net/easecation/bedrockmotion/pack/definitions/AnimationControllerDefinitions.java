@@ -14,14 +14,15 @@ import java.util.Map;
 public class AnimationControllerDefinitions {
     private static final Logger LOGGER = LoggerFactory.getLogger(AnimationControllerDefinitions.class);
 
-    private final Map<String, AnimationController> controllers = new HashMap<>();
+    private final Map<String, AnimationController> controllers;
 
     public AnimationControllerDefinitions(final PackManager packManager) {
+        final Map<String, AnimationController> controllers = new HashMap<>();
         for (final Content content : packManager.getPacks()) {
             for (final String path : content.getFilesDeep("animation_controllers/", ".json")) {
                 try {
                     for (final AnimationController controller : AnimationController.parse(content.getJson(path))) {
-                        this.controllers.put(controller.getIdentifier(), controller);
+                        controllers.put(controller.getIdentifier(), controller);
                     }
                 } catch (Throwable e) {
                     LOGGER.warn("Failed to parse animation controller definition {}", path, e);
@@ -29,8 +30,13 @@ public class AnimationControllerDefinitions {
             }
         }
 
+        this.controllers = controllers;
         if (!this.controllers.isEmpty()) {
             LOGGER.debug("[PackManager] Loaded {} animation controllers", this.controllers.size());
         }
+    }
+
+    public AnimationControllerDefinitions(final Map<String, AnimationController> controllers) {
+        this.controllers = Map.copyOf(controllers);
     }
 }

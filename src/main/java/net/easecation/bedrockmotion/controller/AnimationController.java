@@ -22,6 +22,14 @@ public class AnimationController {
         this.states = states;
     }
 
+    /** Returns a detached immutable definition for process-wide sharing. */
+    public AnimationController immutableCopy() {
+        final Map<String, State> immutableStates = new LinkedHashMap<>();
+        this.states.forEach((name, state) -> immutableStates.put(name, state.immutableCopy()));
+        return new AnimationController(this.identifier, this.initialState,
+                Collections.unmodifiableMap(immutableStates));
+    }
+
     public static List<AnimationController> parse(JsonObject root) {
         final JsonObject controllers = root.getAsJsonObject("animation_controllers");
         if (controllers == null || controllers.isEmpty()) {
@@ -79,6 +87,17 @@ public class AnimationController {
             this.particleEffects = particleEffects;
             this.blendTransitionCurve = blendTransitionCurve;
             this.blendViaShortestPath = blendViaShortestPath;
+        }
+
+        private State immutableCopy() {
+            return new State(
+                    List.copyOf(this.animations),
+                    List.copyOf(this.transitions),
+                    List.copyOf(this.onEntry),
+                    List.copyOf(this.onExit),
+                    List.copyOf(this.particleEffects),
+                    this.blendTransitionCurve.immutableCopy(),
+                    this.blendViaShortestPath);
         }
 
         static State parse(JsonObject obj) {

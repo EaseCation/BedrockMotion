@@ -16,20 +16,26 @@ import java.util.Map;
 public class AnimationDefinitions {
     private static final Logger LOGGER = LoggerFactory.getLogger(AnimationDefinitions.class);
 
-    private final Map<String, AnimationData> animations = new HashMap<>();
+    private final Map<String, AnimationData> animations;
 
     public AnimationDefinitions(final PackManager packManager) {
+        final Map<String, AnimationData> animations = new HashMap<>();
         for (final Content content : packManager.getPacks()) {
             for (final String modelPath : content.getFilesDeep("animations/", ".json")) {
                 try {
                     for (final Animation animation : Animation.parse(content.getJson(modelPath))) {
-                        this.animations.put(animation.getIdentifier(), new AnimationData(animation, AnimateBuilder.build(animation)));
+                        animations.put(animation.getIdentifier(), new AnimationData(animation, AnimateBuilder.build(animation)));
                     }
                 } catch (Throwable e) {
                     LOGGER.warn("Failed to parse animation definition {}", modelPath, e);
                 }
             }
         }
+        this.animations = animations;
+    }
+
+    public AnimationDefinitions(final Map<String, AnimationData> animations) {
+        this.animations = Map.copyOf(animations);
     }
 
     public record AnimationData(Animation animation, VBUAnimation compiled) {}

@@ -6,7 +6,6 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonPrimitive;
 import lombok.Getter;
 import lombok.RequiredArgsConstructor;
-import lombok.Setter;
 import lombok.ToString;
 import org.apache.commons.lang3.math.NumberUtils;
 import net.easecation.bedrockmotion.animation.element.Cube;
@@ -20,7 +19,6 @@ import java.util.*;
 @RequiredArgsConstructor
 @ToString
 @Getter
-@Setter
 public class Animation {
     private final String identifier;
     private ValueOrValue<?> loop;
@@ -28,9 +26,10 @@ public class Animation {
     private String timePassExpression = ""; // anim_time_update TODO: Implement this.
     private boolean resetBeforePlay; // override_previous_animation
     private float animationLength = -1;
-    private final List<Cube> cubes = new ArrayList<>();
-    private final Map<Float, List<String>> timeline = new TreeMap<>();
-    private final Map<Float, List<ParticleKeyframe>> particleEffects = new TreeMap<>();
+    private List<Cube> cubes = new ArrayList<>();
+    private Map<Float, List<String>> timeline = new TreeMap<>();
+    private Map<Float, List<ParticleKeyframe>> particleEffects = new TreeMap<>();
+    private boolean immutable;
 
     public record ParticleKeyframe(String effect, String locator, String preEffectExpression) {}
 
@@ -136,5 +135,62 @@ public class Animation {
         String locator = obj.has("locator") ? obj.get("locator").getAsString() : "";
         String preEffect = obj.has("pre_effect_script") ? obj.get("pre_effect_script").getAsString() : "";
         return new ParticleKeyframe(effect, locator, preEffect);
+    }
+
+    /** Returns a detached immutable snapshot suitable for process-wide sharing. */
+    public Animation immutableCopy() {
+        if (this.immutable) return this;
+        final Animation copy = new Animation(this.identifier);
+        copy.loop = ValueOrValue.immutableCopy(this.loop);
+        copy.startDelay = this.startDelay;
+        copy.loopDelay = this.loopDelay;
+        copy.timePassExpression = this.timePassExpression;
+        copy.resetBeforePlay = this.resetBeforePlay;
+        copy.animationLength = this.animationLength;
+        copy.cubes = this.cubes.stream().map(Cube::immutableCopy).toList();
+        final Map<Float, List<String>> timeline = new TreeMap<>();
+        this.timeline.forEach((timestamp, expressions) -> timeline.put(timestamp, List.copyOf(expressions)));
+        copy.timeline = Collections.unmodifiableMap(timeline);
+        final Map<Float, List<ParticleKeyframe>> particleEffects = new TreeMap<>();
+        this.particleEffects.forEach((timestamp, effects) -> particleEffects.put(timestamp, List.copyOf(effects)));
+        copy.particleEffects = Collections.unmodifiableMap(particleEffects);
+        copy.immutable = true;
+        return copy;
+    }
+
+    public void setLoop(final ValueOrValue<?> loop) {
+        this.ensureMutable();
+        this.loop = loop;
+    }
+
+    public void setStartDelay(final String startDelay) {
+        this.ensureMutable();
+        this.startDelay = startDelay;
+    }
+
+    public void setLoopDelay(final String loopDelay) {
+        this.ensureMutable();
+        this.loopDelay = loopDelay;
+    }
+
+    public void setTimePassExpression(final String timePassExpression) {
+        this.ensureMutable();
+        this.timePassExpression = timePassExpression;
+    }
+
+    public void setResetBeforePlay(final boolean resetBeforePlay) {
+        this.ensureMutable();
+        this.resetBeforePlay = resetBeforePlay;
+    }
+
+    public void setAnimationLength(final float animationLength) {
+        this.ensureMutable();
+        this.animationLength = animationLength;
+    }
+
+    private void ensureMutable() {
+        if (this.immutable) {
+            throw new UnsupportedOperationException("Shared animation definitions are immutable");
+        }
     }
 }

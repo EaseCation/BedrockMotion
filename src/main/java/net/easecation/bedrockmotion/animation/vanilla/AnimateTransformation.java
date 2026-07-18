@@ -13,14 +13,47 @@ import team.unnamed.mocha.runtime.value.ObjectValue;
 import team.unnamed.mocha.runtime.value.Value;
 
 import java.util.List;
+import java.util.Objects;
 
 // Taken from vanilla Transformation, adapted for IBoneTarget.
-public record AnimateTransformation(Target target, VBUKeyFrame[] keyframes) {
-    // Static temp vectors for interpolation (single-threaded usage assumed)
-    private static final Vector3f TEMP_V0 = new Vector3f();
-    private static final Vector3f TEMP_V1 = new Vector3f();
-    private static final Vector3f TEMP_V2 = new Vector3f();
-    private static final Vector3f TEMP_V3 = new Vector3f();
+public final class AnimateTransformation {
+    private static final ThreadLocal<InterpolationScratch> INTERPOLATION_SCRATCH =
+            ThreadLocal.withInitial(InterpolationScratch::new);
+    private final Target target;
+    private final VBUKeyFrame[] keyframes;
+    private final boolean immutable;
+
+    public AnimateTransformation(final Target target, final VBUKeyFrame[] keyframes) {
+        this(target, keyframes, false);
+    }
+
+    private AnimateTransformation(final Target target, final VBUKeyFrame[] keyframes,
+                                  final boolean immutable) {
+        this.target = target;
+        this.keyframes = keyframes;
+        this.immutable = immutable;
+    }
+
+    public Target target() {
+        return this.target;
+    }
+
+    public VBUKeyFrame[] keyframes() {
+        return this.immutable ? this.keyframes.clone() : this.keyframes;
+    }
+
+    VBUKeyFrame[] keyframesInternal() {
+        return this.keyframes;
+    }
+
+    public AnimateTransformation immutableCopy() {
+        if (this.immutable) return this;
+        final VBUKeyFrame[] copy = new VBUKeyFrame[this.keyframes.length];
+        for (int i = 0; i < copy.length; i++) {
+            copy[i] = this.keyframes[i].immutableCopy();
+        }
+        return new AnimateTransformation(this.target, copy, true);
+    }
 
     /**
      * A keyframe component (x/y/z) resolved once at build time: either a constant double (the common
@@ -29,8 +62,50 @@ public record AnimateTransformation(Target target, VBUKeyFrame[] keyframes) {
      * pre-parsed AST, instead of re-parsing the source string (and re-running Double.parseDouble) every
      * frame for every bone/transform/keyframe - which dominated render-thread allocation in dense scenes.
      */
-    public record ResolvedComponent(boolean constant, double value, List<Expression> expr, String queryVar) {
-        public static final ResolvedComponent ZERO = new ResolvedComponent(true, 0.0, null, null);
+    public static final class ResolvedComponent {
+        public static final ResolvedComponent ZERO = new ResolvedComponent(
+                true, 0.0, (MoLangEngine.CompiledExpression) null, null);
+
+        private final boolean constant;
+        private final double value;
+        private final MoLangEngine.CompiledExpression expression;
+        private final String queryVar;
+
+        public ResolvedComponent(final boolean constant, final double value,
+                                 final List<Expression> expression, final String queryVar) {
+            this(constant, value,
+                    expression == null ? null : MoLangEngine.compile(expression), queryVar);
+        }
+
+        private ResolvedComponent(final boolean constant, final double value,
+                                  final MoLangEngine.CompiledExpression expression,
+                                  final String queryVar) {
+            this.constant = constant;
+            this.value = value;
+            this.expression = expression;
+            this.queryVar = queryVar;
+        }
+
+        public boolean constant() {
+            return this.constant;
+        }
+
+        public double value() {
+            return this.value;
+        }
+
+        /** Returns a detached AST; animation ticks use {@link #exprInternal()} without copying. */
+        public List<Expression> expr() {
+            return this.expression == null ? null : this.expression.copyExpressions();
+        }
+
+        public String queryVar() {
+            return this.queryVar;
+        }
+
+        MoLangEngine.CompiledExpression exprInternal() {
+            return this.expression;
+        }
 
         public static ResolvedComponent of(final String source) {
             if (source == null || source.isEmpty()) {
@@ -40,19 +115,21 @@ public record AnimateTransformation(Target target, VBUKeyFrame[] keyframes) {
             final char first = source.charAt(0);
             if ((first >= '0' && first <= '9') || first == '-' || first == '.') {
                 try {
-                    return new ResolvedComponent(true, Double.parseDouble(source), null, null);
+                    return new ResolvedComponent(
+                            true, Double.parseDouble(source), (MoLangEngine.CompiledExpression) null, null);
                 } catch (NumberFormatException ignored) {
                     // not a pure number, fall through to AST
                 }
             }
             try {
-                final List<Expression> ast = MoLangEngine.parse(source);
+                final MoLangEngine.CompiledExpression compiled = MoLangEngine.compile(source);
+                final List<Expression> ast = compiled.copyExpressions();
                 // Fast-path: a bare single query-variable access (e.g. "query.anim_time") is the most
                 // common non-constant keyframe. Reading it directly from the scope's query binding skips
                 // the whole ExpressionInterpreter (and its per-eval NumberValue/ObjectProperty allocations)
                 // — a major render-thread allocation source in dense entity scenes.
                 final String qv = extractSingleQueryVar(ast);
-                return new ResolvedComponent(false, 0.0, ast, qv);
+                return new ResolvedComponent(false, 0.0, compiled, qv);
             } catch (Exception e) {
                 return ZERO;
             }
@@ -73,6 +150,27 @@ public record AnimateTransformation(Target target, VBUKeyFrame[] keyframes) {
             }
             return null;
         }
+
+        @Override
+        public boolean equals(final Object object) {
+            if (this == object) return true;
+            if (!(object instanceof ResolvedComponent that)) return false;
+            return this.constant == that.constant
+                    && Double.compare(this.value, that.value) == 0
+                    && Objects.equals(this.expression, that.expression)
+                    && Objects.equals(this.queryVar, that.queryVar);
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hash(this.constant, this.value, this.expression, this.queryVar);
+        }
+
+        @Override
+        public String toString() {
+            return "ResolvedComponent[constant=" + this.constant + ", value=" + this.value
+                    + ", expr=" + this.expression + ", queryVar=" + this.queryVar + ']';
+        }
     }
 
     /** Resolve an xyz source array into per-component constants/ASTs once at build time. */
@@ -89,40 +187,49 @@ public record AnimateTransformation(Target target, VBUKeyFrame[] keyframes) {
 
     public static class Interpolations {
         public static final Interpolation LINEAR = (scope, dest, delta, keyframes, start, end, scale) -> {
-            eval(scope, keyframes[start].post(), TEMP_V1);
-            eval(scope, keyframes[end].pre(), TEMP_V2);
-            return TEMP_V1.lerp(TEMP_V2, delta, dest).mul(scale);
+            final InterpolationScratch scratch = INTERPOLATION_SCRATCH.get();
+            eval(scope, keyframes[start].postInternal(), scratch.v1);
+            eval(scope, keyframes[end].preInternal(), scratch.v2);
+            return scratch.v1.lerp(scratch.v2, delta, dest).mul(scale);
         };
         public static final Interpolation STEP = (scope, dest, delta, keyframes, start, end, scale) -> {
-            eval(scope, keyframes[start].post(), dest);
+            eval(scope, keyframes[start].postInternal(), dest);
             dest.mul(scale);
             return dest;
         };
         public static final Interpolation CUBIC = (scope, dest, delta, keyframes, start, end, scale) -> {
+            final InterpolationScratch scratch = INTERPOLATION_SCRATCH.get();
             // Control point availability (Blockbench: skip before_plus/after_plus if neighbor has separate pre/post)
             boolean hasBefore = start > 0 && !keyframes[start].hasSeparatePrePost();
             boolean hasAfter = end < keyframes.length - 1 && !keyframes[end].hasSeparatePrePost();
 
-            eval(scope, keyframes[start].post(), TEMP_V1);
-            eval(scope, keyframes[end].pre(), TEMP_V2);
+            eval(scope, keyframes[start].postInternal(), scratch.v1);
+            eval(scope, keyframes[end].preInternal(), scratch.v2);
             if (hasBefore) {
-                eval(scope, keyframes[start - 1].post(), TEMP_V0);
+                eval(scope, keyframes[start - 1].postInternal(), scratch.v0);
             } else {
-                TEMP_V0.set(TEMP_V1);
+                scratch.v0.set(scratch.v1);
             }
             if (hasAfter) {
-                eval(scope, keyframes[end + 1].pre(), TEMP_V3);
+                eval(scope, keyframes[end + 1].preInternal(), scratch.v3);
             } else {
-                TEMP_V3.set(TEMP_V2);
+                scratch.v3.set(scratch.v2);
             }
 
             dest.set(
-                    MathUtil.catmullRom(delta, TEMP_V0.x(), TEMP_V1.x(), TEMP_V2.x(), TEMP_V3.x()) * scale,
-                    MathUtil.catmullRom(delta, TEMP_V0.y(), TEMP_V1.y(), TEMP_V2.y(), TEMP_V3.y()) * scale,
-                    MathUtil.catmullRom(delta, TEMP_V0.z(), TEMP_V1.z(), TEMP_V2.z(), TEMP_V3.z()) * scale
+                    MathUtil.catmullRom(delta, scratch.v0.x(), scratch.v1.x(), scratch.v2.x(), scratch.v3.x()) * scale,
+                    MathUtil.catmullRom(delta, scratch.v0.y(), scratch.v1.y(), scratch.v2.y(), scratch.v3.y()) * scale,
+                    MathUtil.catmullRom(delta, scratch.v0.z(), scratch.v1.z(), scratch.v2.z(), scratch.v3.z()) * scale
             );
             return dest;
         };
+    }
+
+    private static final class InterpolationScratch {
+        private final Vector3f v0 = new Vector3f();
+        private final Vector3f v1 = new Vector3f();
+        private final Vector3f v2 = new Vector3f();
+        private final Vector3f v3 = new Vector3f();
     }
 
     private static void eval(Scope scope, ResolvedComponent[] xyz, Vector3f dest) {
@@ -150,7 +257,7 @@ public record AnimateTransformation(Target target, VBUKeyFrame[] keyframes) {
             }
         }
         try {
-            return (float) MoLangEngine.eval(scope, component.expr()).getAsNumber();
+            return (float) MoLangEngine.eval(scope, component.exprInternal()).getAsNumber();
         } catch (Exception e) {
             return 0.0F;
         }

@@ -5,7 +5,6 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonPrimitive;
 import lombok.Getter;
 import lombok.RequiredArgsConstructor;
-import lombok.Setter;
 import lombok.ToString;
 import org.apache.commons.lang3.math.NumberUtils;
 import net.easecation.bedrockmotion.animation.element.timestamp.ComplexTimeStamp;
@@ -20,7 +19,6 @@ import java.util.TreeMap;
 
 @RequiredArgsConstructor
 @ToString
-@Setter
 @Getter
 public final class Cube {
     private final String identifier;
@@ -28,6 +26,7 @@ public final class Cube {
     private ValueOrValue<?> position;
     private ValueOrValue<?> rotation;
     private ValueOrValue<?> scale;
+    private boolean immutable;
 
     public static List<Cube> parse(final JsonObject object) {
         final List<Cube> cubes = new ArrayList<>();
@@ -101,5 +100,43 @@ public final class Cube {
         }
 
         return null;
+    }
+
+    /** Returns a detached immutable snapshot of this parsed bone transform. */
+    public Cube immutableCopy() {
+        if (this.immutable) return this;
+        final Cube copy = new Cube(this.identifier);
+        copy.relativeTo = this.relativeTo;
+        copy.position = ValueOrValue.immutableCopy(this.position);
+        copy.rotation = ValueOrValue.immutableCopy(this.rotation);
+        copy.scale = ValueOrValue.immutableCopy(this.scale);
+        copy.immutable = true;
+        return copy;
+    }
+
+    public void setRelativeTo(final String relativeTo) {
+        this.ensureMutable();
+        this.relativeTo = relativeTo;
+    }
+
+    public void setPosition(final ValueOrValue<?> position) {
+        this.ensureMutable();
+        this.position = position;
+    }
+
+    public void setRotation(final ValueOrValue<?> rotation) {
+        this.ensureMutable();
+        this.rotation = rotation;
+    }
+
+    public void setScale(final ValueOrValue<?> scale) {
+        this.ensureMutable();
+        this.scale = scale;
+    }
+
+    private void ensureMutable() {
+        if (this.immutable) {
+            throw new UnsupportedOperationException("Shared animation cubes are immutable");
+        }
     }
 }

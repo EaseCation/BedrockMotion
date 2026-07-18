@@ -16,19 +16,25 @@ import java.util.Map;
 public class RenderControllerDefinitions {
     private static final Logger LOGGER = LoggerFactory.getLogger(RenderControllerDefinitions.class);
 
-    private final Map<String, BedrockRenderController> renderControllers = new HashMap<>();
+    private final Map<String, BedrockRenderController> renderControllers;
 
     public RenderControllerDefinitions(final PackManager packManager) {
+        final Map<String, BedrockRenderController> renderControllers = new HashMap<>();
         for (Content content : packManager.getPacks()) {
             for (String controllerPath : content.getFilesDeep("render_controllers/", ".json")) {
                 try {
                     for (BedrockRenderController bedrockRenderController : BedrockControllerParser.parse(content.getString(controllerPath))) {
-                        this.renderControllers.put(bedrockRenderController.identifier(), bedrockRenderController);
+                        renderControllers.put(bedrockRenderController.identifier(), bedrockRenderController);
                     }
                 } catch (Throwable e) {
                     LOGGER.warn("Failed to parse render controller definition {}", controllerPath);
                 }
             }
         }
+        this.renderControllers = renderControllers;
+    }
+
+    public RenderControllerDefinitions(final Map<String, BedrockRenderController> renderControllers) {
+        this.renderControllers = Map.copyOf(renderControllers);
     }
 }

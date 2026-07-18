@@ -30,6 +30,11 @@ public class BlendTransitionCurve {
         return new BlendTransitionCurve(keyframes.lastKey(), keyframes);
     }
 
+    BlendTransitionCurve immutableCopy() {
+        return this.keyframes == null ? this : new BlendTransitionCurve(
+                this.duration, new TreeMap<>(this.keyframes));
+    }
+
     public static BlendTransitionCurve parse(JsonElement element) {
         if (element == null || element.isJsonNull()) return NONE;
 

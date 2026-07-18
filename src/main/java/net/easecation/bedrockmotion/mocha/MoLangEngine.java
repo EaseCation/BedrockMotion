@@ -18,7 +18,18 @@
 package net.easecation.bedrockmotion.mocha;
 
 import team.unnamed.mocha.parser.MolangParser;
+import team.unnamed.mocha.parser.ast.AccessExpression;
+import team.unnamed.mocha.parser.ast.ArrayAccessExpression;
+import team.unnamed.mocha.parser.ast.BinaryExpression;
+import team.unnamed.mocha.parser.ast.CallExpression;
+import team.unnamed.mocha.parser.ast.DoubleExpression;
+import team.unnamed.mocha.parser.ast.ExecutionScopeExpression;
 import team.unnamed.mocha.parser.ast.Expression;
+import team.unnamed.mocha.parser.ast.IdentifierExpression;
+import team.unnamed.mocha.parser.ast.StatementExpression;
+import team.unnamed.mocha.parser.ast.StringExpression;
+import team.unnamed.mocha.parser.ast.TernaryConditionalExpression;
+import team.unnamed.mocha.parser.ast.UnaryExpression;
 import team.unnamed.mocha.runtime.ExpressionInterpreter;
 import team.unnamed.mocha.runtime.Scope;
 import team.unnamed.mocha.runtime.value.MutableObjectBinding;
@@ -28,12 +39,14 @@ import team.unnamed.mocha.runtime.value.Value;
 import java.io.IOException;
 import java.io.Reader;
 import java.io.StringReader;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 
 @SuppressWarnings("UnstableApiUsage")
 public class MoLangEngine {
-    private static final ConcurrentHashMap<String, List<Expression>> PARSE_CACHE = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<String, CompiledExpression> PARSE_CACHE = new ConcurrentHashMap<>();
     private static final int MAX_CACHE_SIZE = 4096;
     private static final ThreadLocal<LayeredScope> EVAL_SCOPE =
             ThreadLocal.withInitial(() -> new LayeredScope(Scope.create()));
@@ -60,10 +73,18 @@ public class MoLangEngine {
             }
         }
 
-        return eval(scope, parse(expression));
+        return eval(scope, compile(expression));
     }
 
     public static Value eval(final Scope scope, final List<Expression> expressions) {
+        return evalExpressions(scope, expressions);
+    }
+
+    public static Value eval(final Scope scope, final CompiledExpression expression) {
+        return evalExpressions(scope, expression.expressions);
+    }
+
+    private static Value evalExpressions(final Scope scope, final List<Expression> expressions) {
         final LayeredScope localScope = EVAL_SCOPE.get();
         localScope.reset(scope);
         final ResettableTempBinding tempBinding = EVAL_TEMP.get();
@@ -114,21 +135,117 @@ public class MoLangEngine {
     }
 
     public static List<Expression> parse(final String expression) throws IOException {
-        List<Expression> cached = PARSE_CACHE.get(expression);
+        return compile(expression).copyExpressions();
+    }
+
+    /**
+     * Returns an opaque cached AST which can be evaluated concurrently but never exposes the mutable
+     * Mocha nodes it owns.
+     */
+    public static CompiledExpression compile(final String expression) throws IOException {
+        final CompiledExpression cached = PARSE_CACHE.get(expression);
         if (cached != null) {
             return cached;
         }
 
         try (final StringReader reader = new StringReader(expression)) {
-            List<Expression> parsed = parse(reader);
+            final CompiledExpression parsed = new CompiledExpression(parse(reader));
             if (PARSE_CACHE.size() < MAX_CACHE_SIZE) {
-                PARSE_CACHE.put(expression, parsed);
+                final CompiledExpression raced = PARSE_CACHE.putIfAbsent(expression, parsed);
+                if (raced != null) {
+                    return raced;
+                }
             }
             return parsed;
         }
     }
 
+    /** Creates an opaque compiled expression detached from a caller-owned AST. */
+    public static CompiledExpression compile(final List<Expression> expressions) {
+        return new CompiledExpression(copyExpressions(expressions));
+    }
+
     public static List<Expression> parse(final Reader reader) throws IOException {
         return MolangParser.parser(reader).parseAll();
+    }
+
+    public static final class CompiledExpression {
+        private final List<Expression> expressions;
+
+        private CompiledExpression(final List<Expression> expressions) {
+            this.expressions = List.copyOf(expressions);
+        }
+
+        /** Returns a fully detached tree because Mocha's AST nodes and child lists are mutable. */
+        public List<Expression> copyExpressions() {
+            return MoLangEngine.copyExpressions(this.expressions);
+        }
+
+        @Override
+        public boolean equals(final Object object) {
+            if (this == object) return true;
+            if (!(object instanceof CompiledExpression that)) return false;
+            return this.expressions.equals(that.expressions);
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hash(this.expressions);
+        }
+
+        @Override
+        public String toString() {
+            return this.expressions.toString();
+        }
+    }
+
+    private static List<Expression> copyExpressions(final List<Expression> expressions) {
+        final List<Expression> copy = new ArrayList<>(expressions.size());
+        for (Expression expression : expressions) {
+            copy.add(copyExpression(expression));
+        }
+        return copy;
+    }
+
+    private static Expression copyExpression(final Expression expression) {
+        if (expression instanceof AccessExpression access) {
+            return new AccessExpression(copyExpression(access.object()), access.property());
+        }
+        if (expression instanceof ArrayAccessExpression arrayAccess) {
+            return new ArrayAccessExpression(
+                    copyExpression(arrayAccess.array()), copyExpression(arrayAccess.index()));
+        }
+        if (expression instanceof BinaryExpression binary) {
+            return new BinaryExpression(
+                    binary.op(), copyExpression(binary.left()), copyExpression(binary.right()));
+        }
+        if (expression instanceof CallExpression call) {
+            return new CallExpression(copyExpression(call.function()), copyExpressions(call.arguments()));
+        }
+        if (expression instanceof DoubleExpression number) {
+            return new DoubleExpression(number.value());
+        }
+        if (expression instanceof ExecutionScopeExpression executionScope) {
+            return new ExecutionScopeExpression(copyExpressions(executionScope.expressions()));
+        }
+        if (expression instanceof IdentifierExpression identifier) {
+            return new IdentifierExpression(identifier.name());
+        }
+        if (expression instanceof StatementExpression statement) {
+            return new StatementExpression(statement.op());
+        }
+        if (expression instanceof StringExpression string) {
+            return new StringExpression(string.value());
+        }
+        if (expression instanceof TernaryConditionalExpression ternary) {
+            return new TernaryConditionalExpression(
+                    copyExpression(ternary.condition()),
+                    copyExpression(ternary.trueExpression()),
+                    copyExpression(ternary.falseExpression()));
+        }
+        if (expression instanceof UnaryExpression unary) {
+            return new UnaryExpression(unary.op(), copyExpression(unary.expression()));
+        }
+        throw new IllegalArgumentException("Unsupported Mocha expression type: " + expression.getClass().getName());
     }
 }

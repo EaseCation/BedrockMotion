@@ -14,7 +14,6 @@ import net.easecation.bedrockmotion.util.MathUtil;
 import org.joml.Vector3f;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import team.unnamed.mocha.parser.ast.Expression;
 import team.unnamed.mocha.runtime.Scope;
 import team.unnamed.mocha.runtime.value.MutableObjectBinding;
 import team.unnamed.mocha.runtime.value.Value;
@@ -42,7 +41,7 @@ public class AnimationControllerInstance {
     private final Map<String, List<ParsedTransition>> parsedTransitionsByState = new HashMap<>();
 
     // Pre-parsed blend weight expressions for current state's animators (rebuilt on state change)
-    private final Map<String, List<Expression>> parsedBlendWeights = new HashMap<>();
+    private final Map<String, MoLangEngine.CompiledExpression> parsedBlendWeights = new HashMap<>();
 
     // States that are fading out during a blend_transition cross-fade
     private final List<FadingState> fadingStates = new ArrayList<>();
@@ -66,7 +65,7 @@ public class AnimationControllerInstance {
             AnimationDefinitions animationDefinitions,
             AnimationEventListener listener) {
         this.definition = definition;
-        this.entityAnimations = entityAnimations;
+        this.entityAnimations = Map.copyOf(entityAnimations);
         this.animationDefinitions = animationDefinitions;
         this.listener = listener;
 
@@ -79,7 +78,7 @@ public class AnimationControllerInstance {
             final List<ParsedTransition> parsed = new ArrayList<>();
             for (AnimationController.Transition trans : entry.getValue().getTransitions()) {
                 try {
-                    parsed.add(new ParsedTransition(trans.targetState(), MoLangEngine.parse(trans.condition())));
+                    parsed.add(new ParsedTransition(trans.targetState(), MoLangEngine.compile(trans.condition())));
                 } catch (IOException e) {
                     LOGGER.warn("[AnimController] Failed to parse transition condition '{}' in state '{}'",
                             trans.condition(), entry.getKey(), e);
@@ -353,7 +352,7 @@ public class AnimationControllerInstance {
             if (sa.blendWeightExpression() != null && !sa.blendWeightExpression().isBlank()) {
                 try {
                     parsedBlendWeights.put(animData.animation().getIdentifier(),
-                            MoLangEngine.parse(sa.blendWeightExpression()));
+                            MoLangEngine.compile(sa.blendWeightExpression()));
                 } catch (IOException e) {
                     LOGGER.warn("[AnimController] Failed to parse blend weight '{}' for animation '{}'",
                             sa.blendWeightExpression(), sa.shortName(), e);
@@ -379,9 +378,9 @@ public class AnimationControllerInstance {
         }
     }
 
-    private float evalBlendWeight(Map<String, List<Expression>> blendWeightMap,
+    private float evalBlendWeight(Map<String, MoLangEngine.CompiledExpression> blendWeightMap,
                                   String animId, Scope frameScope) {
-        final List<Expression> expr = blendWeightMap.get(animId);
+        final MoLangEngine.CompiledExpression expr = blendWeightMap.get(animId);
         if (expr == null) return 1.0f;
         try {
             return (float) MoLangEngine.eval(frameScope, expr).getAsNumber();
@@ -411,18 +410,18 @@ public class AnimationControllerInstance {
         return total;
     }
 
-    private record ParsedTransition(String targetState, List<Expression> parsedCondition) {}
+    private record ParsedTransition(String targetState, MoLangEngine.CompiledExpression parsedCondition) {}
 
     private static final class FadingState {
         final Map<String, Animator> animators;
-        final Map<String, List<Expression>> blendWeights;
+        final Map<String, MoLangEngine.CompiledExpression> blendWeights;
         final BlendTransitionCurve curve;
         final long fadeStartMS;
         final boolean blendViaShortestPath;
         final Map<String, Float> baseWeights = new HashMap<>();
 
         FadingState(Map<String, Animator> animators,
-                    Map<String, List<Expression>> blendWeights,
+                    Map<String, MoLangEngine.CompiledExpression> blendWeights,
                     BlendTransitionCurve curve, long fadeStartMS,
                     boolean blendViaShortestPath) {
             this.animators = animators;

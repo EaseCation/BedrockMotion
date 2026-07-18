@@ -18,9 +18,9 @@ public class AnimateBuilder {
             float largestTimeStamp = 0;
             for (Cube cube : animation.getCubes()) {
                 if (cube.getPosition() != null) {
-                    if (cube.getPosition().getValue() instanceof TreeMap<?, ?> rawMap) {
+                    if (cube.getPosition().getValue() instanceof Map<?, ?> rawMap) {
                         @SuppressWarnings("unchecked")
-                        final TreeMap<Float, ValueOrValue<?>> map = (TreeMap<Float, ValueOrValue<?>>) rawMap;
+                        final Map<Float, ValueOrValue<?>> map = (Map<Float, ValueOrValue<?>>) rawMap;
                         for (Float v : map.keySet()) {
                             if (largestTimeStamp < v) {
                                 largestTimeStamp = v;
@@ -30,9 +30,9 @@ public class AnimateBuilder {
                 }
 
                 if (cube.getRotation() != null) {
-                    if (cube.getRotation().getValue() instanceof TreeMap<?, ?> rawMap) {
+                    if (cube.getRotation().getValue() instanceof Map<?, ?> rawMap) {
                         @SuppressWarnings("unchecked")
-                        final TreeMap<Float, ValueOrValue<?>> map = (TreeMap<Float, ValueOrValue<?>>) rawMap;
+                        final Map<Float, ValueOrValue<?>> map = (Map<Float, ValueOrValue<?>>) rawMap;
                         for (Float v : map.keySet()) {
                             if (largestTimeStamp < v) {
                                 largestTimeStamp = v;
@@ -42,9 +42,9 @@ public class AnimateBuilder {
                 }
 
                 if (cube.getScale() != null) {
-                    if (cube.getScale().getValue() instanceof TreeMap<?, ?> rawMap) {
+                    if (cube.getScale().getValue() instanceof Map<?, ?> rawMap) {
                         @SuppressWarnings("unchecked")
-                        final TreeMap<Float, ValueOrValue<?>> map = (TreeMap<Float, ValueOrValue<?>>) rawMap;
+                        final Map<Float, ValueOrValue<?>> map = (Map<Float, ValueOrValue<?>>) rawMap;
                         for (Float v : map.keySet()) {
                             if (largestTimeStamp < v) {
                                 largestTimeStamp = v;
@@ -86,12 +86,12 @@ public class AnimateBuilder {
         // and AnimationHelper.animate looks them up via IBoneModel.getBoneIndex() (contract: lowercase
         // keys) — so this avoids a per-bone-per-frame toLowerCase at query time.
         name = name.toLowerCase(Locale.ROOT);
-        if (object instanceof TreeMap<?, ?> rawMap) {
+        if (object instanceof Map<?, ?> rawMap) {
             if (rawMap.isEmpty()) {
                 return;
             }
 
-            final TreeMap<Float, ValueOrValue<?>> map = (TreeMap<Float, ValueOrValue<?>>) rawMap;
+            final Map<Float, ValueOrValue<?>> map = (Map<Float, ValueOrValue<?>>) rawMap;
             List<VBUKeyFrame> frameList = new ArrayList<>();
 
             for (Map.Entry<Float, ValueOrValue<?>> entry : map.entrySet()) {

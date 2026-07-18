@@ -25,7 +25,7 @@ public class AnimationHelper {
             }
             List<AnimateTransformation> list = entry.getValue();
             for (AnimateTransformation transformation : list) {
-                VBUKeyFrame[] lvs = transformation.keyframes();
+                VBUKeyFrame[] lvs = transformation.keyframesInternal();
                 int i = Math.max(0, MathUtil.binarySearch(0, lvs.length, idx -> {
                     if (lvs[idx] == null) {
                         return false;
