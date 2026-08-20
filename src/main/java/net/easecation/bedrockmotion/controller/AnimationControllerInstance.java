@@ -1,13 +1,17 @@
 package net.easecation.bedrockmotion.controller;
 
 import lombok.Setter;
+import net.easecation.bedrockmotion.animator.AnimationClock;
 import net.easecation.bedrockmotion.animator.Animator;
 import net.easecation.bedrockmotion.model.AnimationEventListener;
+import net.easecation.bedrockmotion.model.AnimationParticleEvent;
+import net.easecation.bedrockmotion.model.AnimationSoundEvent;
 import net.easecation.bedrockmotion.model.BoneTransform;
 import net.easecation.bedrockmotion.model.IBoneModel;
 import net.easecation.bedrockmotion.model.IBoneTarget;
 import net.easecation.bedrockmotion.mocha.LayeredScope;
 import net.easecation.bedrockmotion.mocha.MoLangEngine;
+import net.easecation.bedrockmotion.mocha.MoLangEvaluationContext;
 import net.easecation.bedrockmotion.mocha.OverlayBinding;
 import net.easecation.bedrockmotion.pack.definitions.AnimationDefinitions;
 import net.easecation.bedrockmotion.util.MathUtil;
@@ -32,6 +36,7 @@ public class AnimationControllerInstance {
     private final Map<String, String> entityAnimations; // entity def shortName -> full anim identifier
     private final AnimationDefinitions animationDefinitions;
     private final AnimationEventListener listener;
+    private final AnimationClock clock;
 
     private String currentStateName;
     private AnimationController.State currentState;
@@ -59,18 +64,32 @@ public class AnimationControllerInstance {
     private int debugTickCounter = 0;
     private long stateEnteredMS;
 
+    public String currentStateName() {
+        return currentStateName;
+    }
+
     public AnimationControllerInstance(
             AnimationController definition,
             Map<String, String> entityAnimations,
             AnimationDefinitions animationDefinitions,
             AnimationEventListener listener) {
+        this(definition, entityAnimations, animationDefinitions, listener, AnimationClock.SYSTEM);
+    }
+
+    public AnimationControllerInstance(
+            AnimationController definition,
+            Map<String, String> entityAnimations,
+            AnimationDefinitions animationDefinitions,
+            AnimationEventListener listener,
+            AnimationClock clock) {
         this.definition = definition;
         this.entityAnimations = Map.copyOf(entityAnimations);
         this.animationDefinitions = animationDefinitions;
         this.listener = listener;
+        this.clock = clock;
 
         preParseAllTransitions();
-        enterState(definition.getInitialState(), listener.getEntityScope());
+        enterState(definition.getInitialState(), listener.getEntityScope(), MoLangEvaluationContext.EMPTY);
     }
 
     private void preParseAllTransitions() {
@@ -95,14 +114,26 @@ public class AnimationControllerInstance {
         }
     }
 
+    /** Propagates the actor context to all held animators (current and fading states). */
+    public void setEvaluationContext(MoLangEvaluationContext context) {
+        stateAnimators.values().forEach(a -> a.setEvaluationContext(context));
+        for (FadingState fs : fadingStates) {
+            fs.animators.values().forEach(a -> a.setEvaluationContext(context));
+        }
+    }
+
     public void tick(Scope frameScope) {
+        tick(frameScope, MoLangEvaluationContext.EMPTY);
+    }
+
+    public void tick(Scope frameScope, MoLangEvaluationContext context) {
         if (controllerBlendWeight <= 0 || currentState == null) {
             return;
         }
 
         final Scope transitionScope = buildTransitionScope(frameScope);
 
-        if (debugTickCounter++ % 60 == 0) {
+        if (debugTickCounter++ % 60 == 0 && LOGGER.isDebugEnabled()) {
             try {
                 final Value variantVal = ((MutableObjectBinding) frameScope.get("query")).get("variant");
                 LOGGER.debug("[AnimController] {} | state='{}' | variant={} | animators={} | donePlaying={}",
@@ -120,11 +151,11 @@ public class AnimationControllerInstance {
         if (transitions != null) {
             for (ParsedTransition trans : transitions) {
                 try {
-                    final Value result = MoLangEngine.eval(transitionScope, trans.parsedCondition());
+                    final Value result = MoLangEngine.eval(transitionScope, context, trans.parsedCondition());
                     if (result.getAsBoolean()) {
                         LOGGER.debug("[AnimController] {} transition: {} -> {}",
                                 definition.getIdentifier(), currentStateName, trans.targetState());
-                        enterState(trans.targetState(), transitionScope);
+                        enterState(trans.targetState(), transitionScope, context);
                         break;
                     }
                 } catch (Throwable e) {
@@ -134,15 +165,17 @@ public class AnimationControllerInstance {
             }
         }
 
-        final float totalFadingWeight = tickFadingStates(frameScope);
+        final float totalFadingWeight = tickFadingStates(frameScope, context);
         final float incomingFactor = Math.max(0, 1.0f - totalFadingWeight);
 
         this.lastIncomingFactor = incomingFactor;
         currentBaseWeights.clear();
         stateAnimators.forEach((animId, animator) -> {
-            float base = evalBlendWeight(parsedBlendWeights, animId, frameScope);
+            float base = evalBlendWeight(parsedBlendWeights, animId, frameScope, context);
             currentBaseWeights.put(animId, base);
             animator.setBlendWeight(base * incomingFactor * controllerBlendWeight);
+            // State advancement lives in tick; animate(model, false) sampling stays pure.
+            animator.advance();
         });
     }
 
@@ -169,7 +202,7 @@ public class AnimationControllerInstance {
         reusableTransitionOverlay.set("any_animation_finished", Value.of(anyFinished ? 1.0 : 0.0));
         reusableTransitionOverlay.set("all_animations_finished", Value.of(allFinished ? 1.0 : 0.0));
 
-        final float stateTime = (System.currentTimeMillis() - stateEnteredMS) / 1000f;
+        final float stateTime = (clock.timeMillis() - stateEnteredMS) / 1000f;
         reusableTransitionOverlay.set("anim_time", Value.of(stateTime));
 
         scope.set("query", reusableTransitionOverlay);
@@ -178,6 +211,10 @@ public class AnimationControllerInstance {
     }
 
     public void animate(IBoneModel model) {
+        animate(model, true);
+    }
+
+    public void animate(IBoneModel model, boolean fireEvents) {
         if (controllerBlendWeight <= 0) {
             return;
         }
@@ -192,20 +229,20 @@ public class AnimationControllerInstance {
 
         for (FadingState fs : fadingStates) {
             if (fs == shortestPathFs) continue;
-            applyAnimators(fs.animators.values(), model);
+            applyAnimators(fs.animators.values(), model, fireEvents);
         }
 
         if (shortestPathFs != null) {
-            animateWithShortestPath(model, shortestPathFs);
+            animateWithShortestPath(model, shortestPathFs, fireEvents);
         } else {
-            applyAnimators(stateAnimators.values(), model);
+            applyAnimators(stateAnimators.values(), model, fireEvents);
         }
     }
 
-    private void applyAnimators(Collection<Animator> animators, IBoneModel model) {
+    private void applyAnimators(Collection<Animator> animators, IBoneModel model, boolean fireEvents) {
         for (Animator animator : animators) {
             try {
-                animator.animate(model);
+                animator.animate(model, fireEvents);
             } catch (IOException e) {
                 throw new RuntimeException(e);
             }
@@ -215,7 +252,7 @@ public class AnimationControllerInstance {
     /**
      * Two-pass blending with shortest rotation path for a fading state cross-fade.
      */
-    private void animateWithShortestPath(IBoneModel model, FadingState outgoing) {
+    private void animateWithShortestPath(IBoneModel model, FadingState outgoing, boolean fireEvents) {
         final Iterable<IBoneTarget> allBones = model.getAllBones();
 
         // Save current bone state
@@ -226,7 +263,7 @@ public class AnimationControllerInstance {
 
         // --- Pass 1: Outgoing at base weight ---
         setAnimatorWeights(outgoing.animators, outgoing.baseWeights, 1.0f);
-        applyAnimators(outgoing.animators.values(), model);
+        applyAnimators(outgoing.animators.values(), model, fireEvents);
 
         // Capture outgoing result, then restore bones for pass 2
         final Map<IBoneTarget, BoneTransform> afterOut = new IdentityHashMap<>();
@@ -241,7 +278,7 @@ public class AnimationControllerInstance {
 
         // --- Pass 2: Incoming at base weight ---
         setAnimatorWeights(stateAnimators, currentBaseWeights, 1.0f);
-        applyAnimators(stateAnimators.values(), model);
+        applyAnimators(stateAnimators.values(), model, fireEvents);
 
         // --- Blend outgoing/incoming deltas and apply ---
         final float inFactor = lastIncomingFactor;
@@ -301,7 +338,7 @@ public class AnimationControllerInstance {
         });
     }
 
-    private void enterState(String stateName, Scope scope) {
+    private void enterState(String stateName, Scope scope, MoLangEvaluationContext context) {
         final AnimationController.State newState = definition.getStates().get(stateName);
         if (newState == null) {
             LOGGER.warn("[AnimController] State '{}' not found in controller '{}'",
@@ -310,7 +347,7 @@ public class AnimationControllerInstance {
         }
 
         if (currentState != null) {
-            executeScripts(currentState.getOnExit(), scope);
+            executeScripts(currentState.getOnExit(), scope, context);
 
             final BlendTransitionCurve curve = currentState.getBlendTransitionCurve();
             if (!curve.isNone() && !stateAnimators.isEmpty()) {
@@ -318,8 +355,9 @@ public class AnimationControllerInstance {
                         new LinkedHashMap<>(stateAnimators),
                         new HashMap<>(parsedBlendWeights),
                         curve,
-                        System.currentTimeMillis(),
-                        currentState.isBlendViaShortestPath()
+                        clock.timeMillis(),
+                        currentState.isBlendViaShortestPath(),
+                        clock
                 ));
             }
         }
@@ -329,7 +367,7 @@ public class AnimationControllerInstance {
 
         currentStateName = stateName;
         currentState = newState;
-        stateEnteredMS = System.currentTimeMillis();
+        stateEnteredMS = clock.timeMillis();
 
         for (AnimationController.StateAnimation sa : currentState.getAnimations()) {
             final String animId = entityAnimations.get(sa.shortName());
@@ -346,7 +384,8 @@ public class AnimationControllerInstance {
                 continue;
             }
 
-            final Animator animator = new Animator(listener, animData);
+            final Animator animator = new Animator(listener, animData, clock);
+            animator.setEvaluationContext(context);
             stateAnimators.put(animData.animation().getIdentifier(), animator);
 
             if (sa.blendWeightExpression() != null && !sa.blendWeightExpression().isBlank()) {
@@ -360,18 +399,23 @@ public class AnimationControllerInstance {
             }
         }
 
-        executeScripts(currentState.getOnEntry(), scope);
+        executeScripts(currentState.getOnEntry(), scope, context);
 
         // Trigger particle effects defined on this state
         for (AnimationController.ParticleEffect pe : currentState.getParticleEffects()) {
-            listener.onParticleEvent(pe.effect(), pe.locator());
+            listener.onParticleEvent(new AnimationParticleEvent(
+                    pe.effect(), pe.locator(), pe.preEffectExpression(), clock.tick()));
+        }
+        for (AnimationController.SoundEffect sound : currentState.getSoundEffects()) {
+            listener.onSoundEvent(new AnimationSoundEvent(
+                    sound.effect(), sound.locator(), sound.preEffectExpression(), clock.tick()));
         }
     }
 
-    private void executeScripts(List<String> scripts, Scope scope) {
+    private void executeScripts(List<String> scripts, Scope scope, MoLangEvaluationContext context) {
         for (String expr : scripts) {
             try {
-                MoLangEngine.eval(scope, expr);
+                MoLangEngine.eval(scope, context, expr);
             } catch (Throwable e) {
                 LOGGER.debug("[AnimController] Failed to execute script: {}", expr, e);
             }
@@ -379,17 +423,17 @@ public class AnimationControllerInstance {
     }
 
     private float evalBlendWeight(Map<String, MoLangEngine.CompiledExpression> blendWeightMap,
-                                  String animId, Scope frameScope) {
+                                  String animId, Scope frameScope, MoLangEvaluationContext context) {
         final MoLangEngine.CompiledExpression expr = blendWeightMap.get(animId);
         if (expr == null) return 1.0f;
         try {
-            return (float) MoLangEngine.eval(frameScope, expr).getAsNumber();
+            return (float) MoLangEngine.eval(frameScope, context, expr).getAsNumber();
         } catch (Throwable e) {
             return 1.0f;
         }
     }
 
-    private float tickFadingStates(Scope frameScope) {
+    private float tickFadingStates(Scope frameScope, MoLangEvaluationContext context) {
         float total = 0;
         final Iterator<FadingState> it = fadingStates.iterator();
         while (it.hasNext()) {
@@ -402,9 +446,10 @@ public class AnimationControllerInstance {
             total += fadeWeight;
             fs.baseWeights.clear();
             fs.animators.forEach((animId, animator) -> {
-                float base = evalBlendWeight(fs.blendWeights, animId, frameScope);
+                float base = evalBlendWeight(fs.blendWeights, animId, frameScope, context);
                 fs.baseWeights.put(animId, base);
                 animator.setBlendWeight(base * fadeWeight * controllerBlendWeight);
+                animator.advance();
             });
         }
         return total;
@@ -418,21 +463,23 @@ public class AnimationControllerInstance {
         final BlendTransitionCurve curve;
         final long fadeStartMS;
         final boolean blendViaShortestPath;
+        final AnimationClock clock;
         final Map<String, Float> baseWeights = new HashMap<>();
 
         FadingState(Map<String, Animator> animators,
                     Map<String, MoLangEngine.CompiledExpression> blendWeights,
                     BlendTransitionCurve curve, long fadeStartMS,
-                    boolean blendViaShortestPath) {
+                    boolean blendViaShortestPath, AnimationClock clock) {
             this.animators = animators;
             this.blendWeights = blendWeights;
             this.curve = curve;
             this.fadeStartMS = fadeStartMS;
             this.blendViaShortestPath = blendViaShortestPath;
+            this.clock = clock;
         }
 
         float getElapsed() {
-            return (System.currentTimeMillis() - fadeStartMS) / 1000f;
+            return (clock.timeMillis() - fadeStartMS) / 1000f;
         }
 
         float getCurrentWeight() {

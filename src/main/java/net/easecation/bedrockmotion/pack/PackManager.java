@@ -24,6 +24,7 @@ public class PackManager {
     private final Profile profile;
     private final RenderControllerDefinitions renderControllerDefinitions;
     private final EntityDefinitions entityDefinitions;
+    private final AttachableDefinitions attachableDefinitions;
     private final ModelDefinitions modelDefinitions;
     private final MaterialDefinitions materialDefinitions;
     private final AnimationDefinitions animationDefinitions;
@@ -68,6 +69,7 @@ public class PackManager {
         if (profile == Profile.FULL) {
             this.renderControllerDefinitions = new RenderControllerDefinitions(this);
             this.entityDefinitions = new EntityDefinitions(this);
+            this.attachableDefinitions = new AttachableDefinitions(this);
             this.modelDefinitions = new ModelDefinitions(this);
             this.materialDefinitions = new MaterialDefinitions(this);
             this.animationDefinitions = new AnimationDefinitions(this);
@@ -77,6 +79,7 @@ public class PackManager {
                     allPacks.stream().map(ServerAnimationLayer::fromContent).toList());
             this.renderControllerDefinitions = new RenderControllerDefinitions(layer.renderControllers());
             this.entityDefinitions = null;
+            this.attachableDefinitions = null;
             this.modelDefinitions = null;
             this.materialDefinitions = null;
             this.animationDefinitions = new AnimationDefinitions(layer.animations());
@@ -93,6 +96,7 @@ public class PackManager {
         this.profile = Profile.SERVER_ANIMATION;
         this.renderControllerDefinitions = new RenderControllerDefinitions(definitions.renderControllers());
         this.entityDefinitions = null;
+        this.attachableDefinitions = null;
         this.modelDefinitions = null;
         this.materialDefinitions = null;
         this.animationDefinitions = new AnimationDefinitions(definitions.animations());

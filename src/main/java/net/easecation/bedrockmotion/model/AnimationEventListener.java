@@ -23,6 +23,12 @@ public interface AnimationEventListener {
      */
     default void onParticleEvent(String effectShortName, String locator) {}
 
+    default void onParticleEvent(AnimationParticleEvent event) {
+        onParticleEvent(event.effect(), event.locator());
+    }
+
+    default void onSoundEvent(AnimationSoundEvent event) {}
+
     /**
      * Returns the entity-level MoLang scope containing variable bindings.
      * Used by AnimationControllerInstance to initialize state on construction.

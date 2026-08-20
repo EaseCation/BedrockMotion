@@ -8,6 +8,7 @@ base.archivesName = 'BedrockMotion'
 version = '1.0.0'
 
 repositories {
+    mavenLocal()
     mavenCentral()
     maven { url 'https://repo.viaversion.com' }
     maven { url 'https://jitpack.io' }

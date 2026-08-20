@@ -2,6 +2,7 @@ package net.easecation.bedrockmotion.animation.vanilla;
 
 import net.easecation.bedrockmotion.model.IBoneTarget;
 import net.easecation.bedrockmotion.mocha.MoLangEngine;
+import net.easecation.bedrockmotion.mocha.MoLangEvaluationContext;
 import net.easecation.bedrockmotion.util.MathUtil;
 import org.joml.Vector3f;
 import team.unnamed.mocha.parser.ast.AccessExpression;
@@ -186,32 +187,32 @@ public final class AnimateTransformation {
     }
 
     public static class Interpolations {
-        public static final Interpolation LINEAR = (scope, dest, delta, keyframes, start, end, scale) -> {
+        public static final Interpolation LINEAR = contextual((scope, context, dest, delta, keyframes, start, end, scale) -> {
             final InterpolationScratch scratch = INTERPOLATION_SCRATCH.get();
-            eval(scope, keyframes[start].postInternal(), scratch.v1);
-            eval(scope, keyframes[end].preInternal(), scratch.v2);
+            eval(scope, context, keyframes[start].postInternal(), scratch.v1);
+            eval(scope, context, keyframes[end].preInternal(), scratch.v2);
             return scratch.v1.lerp(scratch.v2, delta, dest).mul(scale);
-        };
-        public static final Interpolation STEP = (scope, dest, delta, keyframes, start, end, scale) -> {
-            eval(scope, keyframes[start].postInternal(), dest);
+        });
+        public static final Interpolation STEP = contextual((scope, context, dest, delta, keyframes, start, end, scale) -> {
+            eval(scope, context, keyframes[start].postInternal(), dest);
             dest.mul(scale);
             return dest;
-        };
-        public static final Interpolation CUBIC = (scope, dest, delta, keyframes, start, end, scale) -> {
+        });
+        public static final Interpolation CUBIC = contextual((scope, context, dest, delta, keyframes, start, end, scale) -> {
             final InterpolationScratch scratch = INTERPOLATION_SCRATCH.get();
             // Control point availability (Blockbench: skip before_plus/after_plus if neighbor has separate pre/post)
             boolean hasBefore = start > 0 && !keyframes[start].hasSeparatePrePost();
             boolean hasAfter = end < keyframes.length - 1 && !keyframes[end].hasSeparatePrePost();
 
-            eval(scope, keyframes[start].postInternal(), scratch.v1);
-            eval(scope, keyframes[end].preInternal(), scratch.v2);
+            eval(scope, context, keyframes[start].postInternal(), scratch.v1);
+            eval(scope, context, keyframes[end].preInternal(), scratch.v2);
             if (hasBefore) {
-                eval(scope, keyframes[start - 1].postInternal(), scratch.v0);
+                eval(scope, context, keyframes[start - 1].postInternal(), scratch.v0);
             } else {
                 scratch.v0.set(scratch.v1);
             }
             if (hasAfter) {
-                eval(scope, keyframes[end + 1].preInternal(), scratch.v3);
+                eval(scope, context, keyframes[end + 1].preInternal(), scratch.v3);
             } else {
                 scratch.v3.set(scratch.v2);
             }
@@ -222,7 +223,11 @@ public final class AnimateTransformation {
                     MathUtil.catmullRom(delta, scratch.v0.z(), scratch.v1.z(), scratch.v2.z(), scratch.v3.z()) * scale
             );
             return dest;
-        };
+        });
+
+        private static Interpolation contextual(ContextualInterpolation interpolation) {
+            return interpolation;
+        }
     }
 
     private static final class InterpolationScratch {
@@ -232,11 +237,14 @@ public final class AnimateTransformation {
         private final Vector3f v3 = new Vector3f();
     }
 
-    private static void eval(Scope scope, ResolvedComponent[] xyz, Vector3f dest) {
-        dest.set(evalComponent(scope, xyz[0]), evalComponent(scope, xyz[1]), evalComponent(scope, xyz[2]));
+    private static void eval(Scope scope, MoLangEvaluationContext context,
+                             ResolvedComponent[] xyz, Vector3f dest) {
+        dest.set(evalComponent(scope, context, xyz[0]), evalComponent(scope, context, xyz[1]),
+                evalComponent(scope, context, xyz[2]));
     }
 
-    private static float evalComponent(Scope scope, ResolvedComponent component) {
+    private static float evalComponent(Scope scope, MoLangEvaluationContext context,
+                                       ResolvedComponent component) {
         if (component.constant()) {
             return (float) component.value();
         }
@@ -257,7 +265,7 @@ public final class AnimateTransformation {
             }
         }
         try {
-            return (float) MoLangEngine.eval(scope, component.exprInternal()).getAsNumber();
+            return (float) MoLangEngine.eval(scope, context, component.exprInternal()).getAsNumber();
         } catch (Exception e) {
             return 0.0F;
         }
@@ -282,5 +290,29 @@ public final class AnimateTransformation {
 
     public interface Interpolation {
         Vector3f apply(Scope scope, Vector3f var1, float var2, VBUKeyFrame[] var3, int var4, int var5, float var6);
+
+        default Vector3f apply(Scope scope, MoLangEvaluationContext context, Vector3f dest, float delta,
+                               VBUKeyFrame[] keyframes, int start, int end, float scale) {
+            return apply(scope, dest, delta, keyframes, start, end, scale);
+        }
+    }
+
+    @FunctionalInterface
+    private interface ContextualInterpolation extends Interpolation {
+        Vector3f applyContext(Scope scope, MoLangEvaluationContext context, Vector3f dest, float delta,
+                              VBUKeyFrame[] keyframes, int start, int end, float scale);
+
+        @Override
+        default Vector3f apply(Scope scope, Vector3f dest, float delta,
+                               VBUKeyFrame[] keyframes, int start, int end, float scale) {
+            return applyContext(scope, MoLangEvaluationContext.EMPTY, dest, delta,
+                    keyframes, start, end, scale);
+        }
+
+        @Override
+        default Vector3f apply(Scope scope, MoLangEvaluationContext context, Vector3f dest, float delta,
+                               VBUKeyFrame[] keyframes, int start, int end, float scale) {
+            return applyContext(scope, context, dest, delta, keyframes, start, end, scale);
+        }
     }
 }
