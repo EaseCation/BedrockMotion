@@ -82,6 +82,8 @@ public class Animator {
         }
         this.lastAdvanceTick = currentTick;
 
+        final boolean wasDonePlaying = this.donePlaying;
+
         if (this.donePlaying) {
             if (isLooping()) {
                 this.donePlaying = false;
@@ -122,6 +124,8 @@ public class Animator {
             // hold_on_last_frame keeps it. donePlaying is immediately visible to controllers.
             this.finishAtEnd();
         }
+
+        dispatchEvents(!wasDonePlaying && this.donePlaying);
     }
 
     /**
@@ -133,21 +137,16 @@ public class Animator {
     public void animate(IBoneModel model, boolean fireEvents) throws IOException {
         if (fireEvents) {
             final boolean wasStarted = this.started;
-            final boolean wasDonePlaying = this.donePlaying;
             this.advance();
             if (!wasStarted && this.started && this.data.animation().isResetBeforePlay()) {
                 model.resetAllBones();
                 this.TEMP_VEC.set(0);
             }
-            final boolean completedNow = !wasDonePlaying && this.donePlaying;
-            sample(model, true, completedNow);
-            return;
         }
-
-        sample(model, false, false);
+        sample(model);
     }
 
-    private void sample(IBoneModel model, boolean fireEvents, boolean completedNow) throws IOException {
+    private void sample(IBoneModel model) throws IOException {
         if (this.blendWeight <= 0 || !this.started || this.baseScope == null) {
             return;
         }
@@ -176,18 +175,24 @@ public class Animator {
 
         AnimationHelper.animate(scope, this.evaluationContext, model, data.compiled(), elapsedMillis,
                 this.blendWeight, TEMP_VEC, boneIndex);
+    }
 
-        if (fireEvents && (!this.donePlaying || completedNow || this.completionEventsPending)) {
-            final float runningTimeWithoutLoop = elapsedMillis / 1000F;
-            final float previousEventTime = runningTimeWithoutLoop < this.lastEventSampleTime
-                    ? -Float.MIN_VALUE : this.lastEventSampleTime;
-            this.tickTimeline(previousEventTime, runningTimeWithoutLoop);
-            this.tickParticleEffects(previousEventTime, runningTimeWithoutLoop);
-            this.tickSoundEffects(previousEventTime, runningTimeWithoutLoop);
-            this.lastEventSampleTime = runningTimeWithoutLoop;
-            if (this.donePlaying) {
-                this.completionEventsPending = false;
-            }
+    private void dispatchEvents(boolean completedNow) {
+        if (!this.started || (this.donePlaying && !completedNow && !this.completionEventsPending)) {
+            return;
+        }
+        final long elapsedMillis = this.donePlaying && data.compiled().lengthInSeconds() > 0
+                ? Math.round(data.compiled().lengthInSeconds() * 1000.0F)
+                : clock.timeMillis() - this.animationStartMS;
+        final float runningTimeWithoutLoop = elapsedMillis / 1000F;
+        final float previousEventTime = runningTimeWithoutLoop < this.lastEventSampleTime
+                ? -Float.MIN_VALUE : this.lastEventSampleTime;
+        this.tickTimeline(previousEventTime, runningTimeWithoutLoop);
+        this.tickParticleEffects(previousEventTime, runningTimeWithoutLoop);
+        this.tickSoundEffects(previousEventTime, runningTimeWithoutLoop);
+        this.lastEventSampleTime = runningTimeWithoutLoop;
+        if (this.donePlaying) {
+            this.completionEventsPending = false;
         }
     }
 

@@ -13,6 +13,7 @@ import org.junit.jupiter.api.Test;
 import team.unnamed.mocha.runtime.Scope;
 import team.unnamed.mocha.runtime.value.MutableObjectBinding;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -125,12 +126,105 @@ class ClientEntityAnimationRuntimeTest {
         assertTrue(error.getMessage().contains("Animation controller cycle"));
     }
 
+    @Test
+    void controllerTransitionRunsScriptsAndBlendsTheOutgoingPose() throws Exception {
+        final Content pack = animationsPack();
+        pack.putString("animation_controllers/transition.json", """
+                {"format_version":"1.10.0","animation_controllers":{
+                  "controller.test.transition":{"initial_state":"default","states":{
+                    "default":{"animations":["base"],"blend_transition":0.1,
+                      "on_entry":["v.entered_default = 1"],
+                      "on_exit":["v.exited_default = 1"],
+                      "transitions":[{"active":"v.switch"}]},
+                    "active":{"animations":["override"],
+                      "on_entry":["v.entered_active = 1"]}}
+                }}}
+                """);
+        final BedrockEntityData entity = entity(List.of(), List.of(),
+                List.of(new BedrockEntityData.Scripts.Animate("root", "")),
+                Map.of(
+                        "root", "controller.test.transition",
+                        "base", "animation.test.base",
+                        "override", "animation.test.override"));
+        final Scope scope = scope();
+        final MutableObjectBinding variables = (MutableObjectBinding) scope.get("variable");
+        final ClientEntityAnimationRuntime runtime = runtime(entity, Map.of(), pack,
+                new AnimationClock.Client(), listener(scope));
+        final TestModel model = new TestModel("root");
+
+        runtime.tick(0L, scope, MoLangEvaluationContext.EMPTY, ignored -> {
+        });
+        runtime.sample(model, 0.0F, scope, MoLangEvaluationContext.EMPTY);
+        assertEquals(10.0F, model.bone("root").getRotation().x, 1.0e-4F);
+        assertEquals(1.0D, variables.get("entered_default").getAsNumber());
+
+        variables.set("switch", team.unnamed.mocha.runtime.value.Value.of(true));
+        runtime.tick(1L, scope, MoLangEvaluationContext.EMPTY, ignored -> {
+        });
+        runtime.sample(model, 0.0F, scope, MoLangEvaluationContext.EMPTY);
+        assertEquals(10.0F, model.bone("root").getRotation().x, 1.0e-4F);
+        assertEquals(1.0D, variables.get("exited_default").getAsNumber());
+        assertEquals(1.0D, variables.get("entered_active").getAsNumber());
+
+        runtime.tick(2L, scope, MoLangEvaluationContext.EMPTY, ignored -> {
+        });
+        runtime.sample(model, 0.0F, scope, MoLangEvaluationContext.EMPTY);
+        assertEquals(35.0F, model.bone("root").getRotation().x, 1.0e-4F);
+
+        runtime.tick(3L, scope, MoLangEvaluationContext.EMPTY, ignored -> {
+        });
+        runtime.sample(model, 0.0F, scope, MoLangEvaluationContext.EMPTY);
+        assertEquals(60.0F, model.bone("root").getRotation().x, 1.0e-4F);
+    }
+
+    @Test
+    void tickDispatchesTimelineEventsAndRepeatedSamplesRemainPure() throws Exception {
+        final Content pack = new Content();
+        pack.putString("animations/events.json", """
+                {"format_version":"1.10.0","animations":{
+                  "animation.test.events":{"loop":false,"animation_length":0.2,
+                    "timeline":{"0.05":"v.event = 1"},
+                    "bones":{"root":{"rotation":[15,0,0]}}}
+                }}
+                """);
+        final BedrockEntityData entity = entity(List.of(), List.of(),
+                List.of(new BedrockEntityData.Scripts.Animate("events", "")),
+                Map.of("events", "animation.test.events"));
+        final Scope scope = scope();
+        final RecordingListener listener = new RecordingListener(scope);
+        final ClientEntityAnimationRuntime runtime = runtime(entity, Map.of(), pack,
+                new AnimationClock.Client(), listener);
+        final TestModel model = new TestModel("root");
+
+        runtime.tick(0L, scope, MoLangEvaluationContext.EMPTY, ignored -> {
+        });
+        runtime.sample(model, 0.0F, scope, MoLangEvaluationContext.EMPTY);
+        runtime.sample(model, 0.0F, scope, MoLangEvaluationContext.EMPTY);
+        assertTrue(listener.timeline.isEmpty());
+
+        runtime.tick(2L, scope, MoLangEvaluationContext.EMPTY, ignored -> {
+        });
+        assertEquals(List.of("v.event = 1"), listener.timeline);
+        runtime.sample(model, 0.5F, scope, MoLangEvaluationContext.EMPTY);
+        runtime.sample(model, 0.5F, scope, MoLangEvaluationContext.EMPTY);
+        assertEquals(List.of("v.event = 1"), listener.timeline);
+        assertEquals(15.0F, model.bone("root").getRotation().x, 1.0e-4F);
+    }
+
     private static ClientEntityAnimationRuntime runtime(BedrockEntityData entity,
                                                         Map<String, String> overrides,
                                                         Content pack) {
         final Scope scope = scope();
+        return runtime(entity, overrides, pack, new AnimationClock.Client(), listener(scope));
+    }
+
+    private static ClientEntityAnimationRuntime runtime(BedrockEntityData entity,
+                                                        Map<String, String> overrides,
+                                                        Content pack,
+                                                        AnimationClock.Client clock,
+                                                        AnimationEventListener listener) {
         return new ClientEntityAnimationRuntime(entity, overrides, new PackManager(List.of(pack)),
-                new AnimationClock.Client(), listener(scope));
+                clock, listener);
     }
 
     private static BedrockEntityData entity(List<String> initialize, List<String> preAnimation,
@@ -176,6 +270,25 @@ class ClientEntityAnimationRuntimeTest {
                 return scope;
             }
         };
+    }
+
+    private static final class RecordingListener implements AnimationEventListener {
+        private final Scope scope;
+        private final List<String> timeline = new ArrayList<>();
+
+        private RecordingListener(Scope scope) {
+            this.scope = scope;
+        }
+
+        @Override
+        public void onTimelineEvent(List<String> expressions) {
+            timeline.addAll(expressions);
+        }
+
+        @Override
+        public Scope getEntityScope() {
+            return scope;
+        }
     }
 
     private static final class TestModel implements IBoneModel {

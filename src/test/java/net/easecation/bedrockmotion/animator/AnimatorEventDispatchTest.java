@@ -35,10 +35,12 @@ class AnimatorEventDispatchTest {
                 new AnimationDefinitions.AnimationData(animation, AnimateBuilder.build(animation)), clock);
         animator.setBaseScope(listener.scope);
 
-        animator.animate(EMPTY_MODEL, true);
+        animator.advance();
+        animator.animate(EMPTY_MODEL, false);
         clock.advanceTick(2L); // 0.1 s crosses both non-tick-aligned timestamps.
-        animator.animate(EMPTY_MODEL, true);
-        animator.animate(EMPTY_MODEL, true); // repeated pass in the same tick must not re-fire.
+        animator.advance();
+        animator.animate(EMPTY_MODEL, false);
+        animator.animate(EMPTY_MODEL, false); // repeated samples must not re-fire.
 
         assertEquals(List.of(new AnimationParticleEvent("trail", "muzzle", "v.x=1", 2L)), listener.particles);
         assertEquals(List.of(new AnimationSoundEvent("shot", "muzzle", "", 2L)), listener.sounds);
