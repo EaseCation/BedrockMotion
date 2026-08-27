@@ -11,6 +11,7 @@ import net.easecation.bedrockmotion.model.AnimationEventListener;
 import net.easecation.bedrockmotion.model.IBoneModel;
 import net.easecation.bedrockmotion.model.IBoneTarget;
 import net.easecation.bedrockmotion.pack.definitions.AnimationDefinitions;
+import net.easecation.bedrockmotion.pack.definitions.AnimationControllerDefinitions;
 import org.joml.Vector3f;
 import org.junit.jupiter.api.Test;
 import team.unnamed.mocha.runtime.Scope;
@@ -24,6 +25,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class MoLangActorContextTest {
     @Test
@@ -59,7 +61,8 @@ class MoLangActorContextTest {
                                 "next", "c.owning_entity -> variable.attack_time > 5")), List.of()),
                         "next", state(List.of(), List.of(), List.of())));
         AnimationControllerInstance instance = new AnimationControllerInstance(
-                controller, Map.of(), new AnimationDefinitions(Map.of()), listener(scope));
+                controller, Map.of(), new AnimationDefinitions(Map.of()),
+                new AnimationControllerDefinitions(Map.of()), listener(scope));
 
         instance.tick(scope, context);
 
@@ -77,7 +80,8 @@ class MoLangActorContextTest {
                         "next", state(List.of(), List.of(),
                                 List.of("v.entry_value = (c.owning_entity -> variable.attack_time);"))));
         AnimationControllerInstance instance = new AnimationControllerInstance(
-                controller, Map.of(), new AnimationDefinitions(Map.of()), listener(scope));
+                controller, Map.of(), new AnimationDefinitions(Map.of()),
+                new AnimationControllerDefinitions(Map.of()), listener(scope));
 
         instance.tick(scope, context);
 
@@ -98,6 +102,7 @@ class MoLangActorContextTest {
                 Map.of("spin", "animation.test.spin"),
                 new AnimationDefinitions(Map.of(
                         "animation.test.spin", constantRotationAnimation("animation.test.spin"))),
+                new AnimationControllerDefinitions(Map.of()),
                 listener(scope));
         instance.setBaseScope(scope);
         instance.setEvaluationContext(context);
@@ -108,6 +113,60 @@ class MoLangActorContextTest {
 
         // Owner attack_time 9.0 -> blend weight 0.9 -> constant rotation 50 deg sampled at 45 deg.
         assertEquals(45.0, model.bone("root").getRotation().x, 1.0e-4);
+    }
+
+    @Test
+    void nestedControllerUsesParentBlendWeight() {
+        Scope scope = controllerScope(MoLangEvaluationContext.EMPTY);
+        AnimationController child = new AnimationController("controller.test.child", "default",
+                Map.of("default", state(
+                        List.of(new AnimationController.StateAnimation("spin", "1")),
+                        List.of(), List.of())));
+        AnimationController parent = new AnimationController("controller.test.parent", "default",
+                Map.of("default", state(
+                        List.of(new AnimationController.StateAnimation("child", "0.5")),
+                        List.of(), List.of())));
+        Map<String, String> aliases = Map.of(
+                "child", "controller.test.child",
+                "spin", "animation.test.spin");
+        AnimationControllerInstance instance = new AnimationControllerInstance(
+                parent,
+                aliases,
+                new AnimationDefinitions(Map.of(
+                        "animation.test.spin", constantRotationAnimation("animation.test.spin"))),
+                new AnimationControllerDefinitions(Map.of(child.getIdentifier(), child)),
+                listener(scope));
+
+        instance.tick(scope, MoLangEvaluationContext.EMPTY);
+        TestModel model = new TestModel("root");
+        instance.animate(model);
+
+        assertEquals(25.0, model.bone("root").getRotation().x, 1.0e-4);
+    }
+
+    @Test
+    void nestedControllerCycleFailsDuringConstruction() {
+        Scope scope = controllerScope(MoLangEvaluationContext.EMPTY);
+        AnimationController first = new AnimationController("controller.test.first", "default",
+                Map.of("default", state(
+                        List.of(new AnimationController.StateAnimation("second", "1")),
+                        List.of(), List.of())));
+        AnimationController second = new AnimationController("controller.test.second", "default",
+                Map.of("default", state(
+                        List.of(new AnimationController.StateAnimation("first", "1")),
+                        List.of(), List.of())));
+        AnimationControllerDefinitions controllers = new AnimationControllerDefinitions(Map.of(
+                first.getIdentifier(), first,
+                second.getIdentifier(), second));
+
+        assertThrows(IllegalArgumentException.class, () -> new AnimationControllerInstance(
+                first,
+                Map.of(
+                        "first", first.getIdentifier(),
+                        "second", second.getIdentifier()),
+                new AnimationDefinitions(Map.of()),
+                controllers,
+                listener(scope)));
     }
 
     @Test

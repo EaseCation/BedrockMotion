@@ -80,7 +80,8 @@ public final class AttachableAnimationRuntime {
             if (controller != null) {
                 final AnimationControllerInstance instance = controllers.computeIfAbsent(identifier,
                         ignored -> new AnimationControllerInstance(controller, definition.getAnimations(),
-                                packs.getAnimationDefinitions(), listener, clock));
+                                packs.getAnimationDefinitions(), packs.getAnimationControllerDefinitions(),
+                                listener, clock));
                 instance.setBaseScope(scope);
                 instance.setEvaluationContext(context);
                 instance.tick(scope, context);
