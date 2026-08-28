@@ -37,9 +37,9 @@ class ClientEntityAnimationRuntimeTest {
         final ClientEntityAnimationRuntime runtime = runtime(entity,
                 Map.of("root", "animation.test.override"), animationsPack());
 
-        assertTrue(runtime.tick(10L, scope, MoLangEvaluationContext.EMPTY,
+        assertTrue(runtime.tick(10L, 0.0F, scope, MoLangEvaluationContext.EMPTY,
                 ignored -> variables.set("host_input", team.unnamed.mocha.runtime.value.Value.of(5.0D))));
-        assertFalse(runtime.tick(10L, scope, MoLangEvaluationContext.EMPTY, ignored -> {
+        assertFalse(runtime.tick(10L, 0.0F, scope, MoLangEvaluationContext.EMPTY, ignored -> {
         }));
         assertEquals(1.0D, variables.get("initialized").getAsNumber());
         assertEquals(1.0D, variables.get("pre_count").getAsNumber());
@@ -53,7 +53,7 @@ class ClientEntityAnimationRuntimeTest {
         assertEquals(60.0F, first, 1.0e-4F);
         assertEquals(first, model.bone("root").getRotation().x, 1.0e-4F);
 
-        assertTrue(runtime.tick(11L, scope, MoLangEvaluationContext.EMPTY,
+        assertTrue(runtime.tick(11L, 0.0F, scope, MoLangEvaluationContext.EMPTY,
                 ignored -> variables.set("host_input", team.unnamed.mocha.runtime.value.Value.of(6.0D))));
         assertEquals(1.0D, variables.get("initialized").getAsNumber());
         assertEquals(3.0D, variables.get("pre_count").getAsNumber());
@@ -80,7 +80,7 @@ class ClientEntityAnimationRuntimeTest {
         final Scope scope = scope();
         final ClientEntityAnimationRuntime runtime = runtime(entity, Map.of(), pack);
 
-        runtime.tick(0L, scope, MoLangEvaluationContext.EMPTY, ignored -> {
+        runtime.tick(0L, 0.0F, scope, MoLangEvaluationContext.EMPTY, ignored -> {
         });
         final TestModel model = new TestModel("root");
         runtime.sample(model, 0.0F, scope, MoLangEvaluationContext.EMPTY);
@@ -108,7 +108,7 @@ class ClientEntityAnimationRuntimeTest {
         final Scope scope = scope();
         final ClientEntityAnimationRuntime runtime = runtime(entity, Map.of(), pack);
 
-        runtime.tick(0L, scope, MoLangEvaluationContext.EMPTY, ignored -> {
+        runtime.tick(0L, 0.0F, scope, MoLangEvaluationContext.EMPTY, ignored -> {
         });
         final TestModel model = new TestModel("root");
         runtime.sample(model, 0.0F, scope, MoLangEvaluationContext.EMPTY);
@@ -181,26 +181,26 @@ class ClientEntityAnimationRuntimeTest {
                 new AnimationClock.Client(), listener(scope));
         final TestModel model = new TestModel("root");
 
-        runtime.tick(0L, scope, MoLangEvaluationContext.EMPTY, ignored -> {
+        runtime.tick(0L, 0.0F, scope, MoLangEvaluationContext.EMPTY, ignored -> {
         });
         runtime.sample(model, 0.0F, scope, MoLangEvaluationContext.EMPTY);
         assertEquals(10.0F, model.bone("root").getRotation().x, 1.0e-4F);
         assertEquals(1.0D, variables.get("entered_default").getAsNumber());
 
         variables.set("switch", team.unnamed.mocha.runtime.value.Value.of(true));
-        runtime.tick(1L, scope, MoLangEvaluationContext.EMPTY, ignored -> {
+        runtime.tick(1L, 0.0F, scope, MoLangEvaluationContext.EMPTY, ignored -> {
         });
         runtime.sample(model, 0.0F, scope, MoLangEvaluationContext.EMPTY);
         assertEquals(10.0F, model.bone("root").getRotation().x, 1.0e-4F);
         assertEquals(1.0D, variables.get("exited_default").getAsNumber());
         assertEquals(1.0D, variables.get("entered_active").getAsNumber());
 
-        runtime.tick(2L, scope, MoLangEvaluationContext.EMPTY, ignored -> {
+        runtime.tick(2L, 0.0F, scope, MoLangEvaluationContext.EMPTY, ignored -> {
         });
         runtime.sample(model, 0.0F, scope, MoLangEvaluationContext.EMPTY);
         assertEquals(35.0F, model.bone("root").getRotation().x, 1.0e-4F);
 
-        runtime.tick(3L, scope, MoLangEvaluationContext.EMPTY, ignored -> {
+        runtime.tick(3L, 0.0F, scope, MoLangEvaluationContext.EMPTY, ignored -> {
         });
         runtime.sample(model, 0.0F, scope, MoLangEvaluationContext.EMPTY);
         assertEquals(60.0F, model.bone("root").getRotation().x, 1.0e-4F);
@@ -225,13 +225,13 @@ class ClientEntityAnimationRuntimeTest {
                 new AnimationClock.Client(), listener);
         final TestModel model = new TestModel("root");
 
-        runtime.tick(0L, scope, MoLangEvaluationContext.EMPTY, ignored -> {
+        runtime.tick(0L, 0.0F, scope, MoLangEvaluationContext.EMPTY, ignored -> {
         });
         runtime.sample(model, 0.0F, scope, MoLangEvaluationContext.EMPTY);
         runtime.sample(model, 0.0F, scope, MoLangEvaluationContext.EMPTY);
         assertTrue(listener.timeline.isEmpty());
 
-        runtime.tick(2L, scope, MoLangEvaluationContext.EMPTY, ignored -> {
+        runtime.tick(2L, 0.0F, scope, MoLangEvaluationContext.EMPTY, ignored -> {
         });
         assertEquals(List.of("v.event = 1"), listener.timeline);
         runtime.sample(model, 0.5F, scope, MoLangEvaluationContext.EMPTY);
@@ -260,11 +260,11 @@ class ClientEntityAnimationRuntimeTest {
         final ClientEntityAnimationRuntime runtime = runtime(entity, Map.of(), pack);
         final TestModel model = new TestModel("root");
 
-        query.set("frame_alpha", Value.of(0.0F));
-        runtime.tick(12L, scope, MoLangEvaluationContext.EMPTY, ignored -> {
+        query.set("frame_alpha", Value.of(0.25F));
+        runtime.tick(12L, 0.25F, scope, MoLangEvaluationContext.EMPTY, ignored -> {
         });
-        runtime.sample(model, 0.0F, scope, MoLangEvaluationContext.EMPTY);
-        assertEquals(0.0F, model.bone("root").getRotation().x, 1.0e-4F);
+        runtime.sample(model, 0.25F, scope, MoLangEvaluationContext.EMPTY);
+        assertEquals(25.0F, model.bone("root").getRotation().x, 1.0e-4F);
         assertEquals(1.0D, variables.get("pre_animation_count").getAsNumber());
 
         query.set("frame_alpha", Value.of(0.5F));

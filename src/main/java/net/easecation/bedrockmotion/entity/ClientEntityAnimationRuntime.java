@@ -70,12 +70,13 @@ public final class ClientEntityAnimationRuntime {
     }
 
     /** Returns false when this authoritative client tick was already processed. */
-    public boolean tick(long tick, Scope scope, MoLangEvaluationContext context,
+    public boolean tick(long tick, float partialTick, Scope scope, MoLangEvaluationContext context,
                         Consumer<Scope> bindHostInputs) {
         if (tick == lastTick) {
             return false;
         }
         clock.advanceTick(tick);
+        clock.sample(partialTick);
         lastTick = tick;
 
         if (!initialized) {

@@ -27,6 +27,7 @@ public class Animator {
     private final AnimationEventListener listener;
     private final AnimationDefinitions.AnimationData data;
     private final AnimationClock clock;
+    private final MoLangEngine.CompiledExpression animationTimeUpdate;
 
     private long animationStartMS;
     private long animationCompletedMS;
@@ -35,6 +36,10 @@ public class Animator {
     private boolean donePlaying, started, firstPlay;
     private boolean completionEventsPending;
     private float lastEventSampleTime = -Float.MIN_VALUE;
+    private float customAnimationTime;
+    private long customTimeFrameTick = Long.MIN_VALUE;
+    private int customTimePartialTickBits = Float.floatToIntBits(Float.NaN);
+    private long customTimeUpdatedMillis;
 
     private final Vector3f TEMP_VEC = new Vector3f();
     private final LayeredScope reusableScope = new LayeredScope(Scope.create());
@@ -59,7 +64,17 @@ public class Animator {
         this.data = data;
         this.clock = clock;
 
+        final String timeUpdate = data.animation().getTimePassExpression();
+        try {
+            this.animationTimeUpdate = timeUpdate == null || timeUpdate.isBlank()
+                    ? null : MoLangEngine.compile(timeUpdate);
+        } catch (IOException exception) {
+            throw new IllegalArgumentException("Invalid anim_time_update in "
+                    + data.animation().getIdentifier() + ": " + timeUpdate, exception);
+        }
+
         this.animationStartMS = clock.timeMillis();
+        this.customTimeUpdatedMillis = this.animationStartMS;
         this.firstPlay = true;
     }
 
@@ -117,8 +132,17 @@ public class Animator {
             }
         }
 
-        if (this.started && data.compiled().lengthInSeconds() > 0
-                && (clock.timeMillis() - this.animationStartMS) / 1000F >= data.compiled().lengthInSeconds()) {
+        final boolean animationFinished;
+        if (!this.started || data.compiled().lengthInSeconds() <= 0) {
+            animationFinished = false;
+        } else if (this.animationTimeUpdate != null) {
+            animationFinished = !isLooping()
+                    && updateCustomAnimationTime() >= data.compiled().lengthInSeconds();
+        } else {
+            animationFinished = (clock.timeMillis() - this.animationStartMS) / 1000F
+                    >= data.compiled().lengthInSeconds();
+        }
+        if (animationFinished) {
             // Every mode exposes the terminal pose for this authoritative tick. On the next
             // advance, looping animations restart, plain loop=false releases the pose, and
             // hold_on_last_frame keeps it. donePlaying is immediately visible to controllers.
@@ -151,9 +175,7 @@ public class Animator {
             return;
         }
 
-        final long elapsedMillis = this.donePlaying && data.compiled().lengthInSeconds() > 0
-                ? Math.round(data.compiled().lengthInSeconds() * 1000.0F)
-                : clock.timeMillis() - this.animationStartMS;
+        final long elapsedMillis = sampleTimeMillis();
 
         // baseScope already contains complete query bindings from buildFrameScope().
         // Only overlay animation-specific anim_time/life_time.
@@ -181,9 +203,7 @@ public class Animator {
         if (!this.started || (this.donePlaying && !completedNow && !this.completionEventsPending)) {
             return;
         }
-        final long elapsedMillis = this.donePlaying && data.compiled().lengthInSeconds() > 0
-                ? Math.round(data.compiled().lengthInSeconds() * 1000.0F)
-                : clock.timeMillis() - this.animationStartMS;
+        final long elapsedMillis = sampleTimeMillis();
         final float runningTimeWithoutLoop = elapsedMillis / 1000F;
         final float previousEventTime = runningTimeWithoutLoop < this.lastEventSampleTime
                 ? -Float.MIN_VALUE : this.lastEventSampleTime;
@@ -269,6 +289,40 @@ public class Animator {
         this.started = false;
         this.completionEventsPending = false;
         this.lastEventSampleTime = -Float.MIN_VALUE;
+    }
+
+    private long sampleTimeMillis() {
+        if (this.donePlaying && data.compiled().lengthInSeconds() > 0) {
+            return Math.round(data.compiled().lengthInSeconds() * 1000.0F);
+        }
+        if (this.animationTimeUpdate == null) {
+            return clock.timeMillis() - this.animationStartMS;
+        }
+        return Math.round(updateCustomAnimationTime() * 1000.0F);
+    }
+
+    private float updateCustomAnimationTime() {
+        final long frameTick = clock.tick();
+        final int partialTickBits = Float.floatToIntBits(clock.partialTick());
+        if (frameTick == customTimeFrameTick
+                && partialTickBits == customTimePartialTickBits) {
+            return customAnimationTime;
+        }
+
+        final long nowMillis = clock.timeMillis();
+        final float deltaTime = Math.max(0L, nowMillis - customTimeUpdatedMillis) / 1000.0F;
+        reusableScope.reset(this.baseScope);
+        reusableOverlay.reset((MutableObjectBinding) this.baseScope.get("query"));
+        reusableOverlay.set("anim_time", Value.of(customAnimationTime));
+        reusableOverlay.set("delta_time", Value.of(deltaTime));
+        reusableScope.set("query", reusableOverlay);
+        reusableScope.set("q", reusableOverlay);
+        customAnimationTime = (float) MoLangEngine.eval(reusableScope, this.evaluationContext,
+                animationTimeUpdate).getAsNumber();
+        customTimeFrameTick = frameTick;
+        customTimePartialTickBits = partialTickBits;
+        customTimeUpdatedMillis = nowMillis;
+        return customAnimationTime;
     }
 
     /** Marks a non-looping animation complete while retaining its terminal pose for sampling. */
