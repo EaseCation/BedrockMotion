@@ -119,8 +119,9 @@ public class AnimationControllerInstance {
                     parsed.add(new ParsedTransition(
                             transition.targetState(), MoLangEngine.compile(transition.condition())));
                 } catch (IOException e) {
-                    LOGGER.warn("[AnimController] Failed to parse transition condition '{}' in state '{}'",
-                            transition.condition(), entry.getKey(), e);
+                    throw new IllegalArgumentException(
+                            "Invalid transition condition in controller '" + definition.getIdentifier()
+                                    + "', state '" + entry.getKey() + "': " + transition.condition(), e);
                 }
             }
             parsedTransitionsByState.put(entry.getKey(), parsed);
@@ -334,9 +335,8 @@ public class AnimationControllerInstance {
     private void enterState(String stateName, Scope scope, MoLangEvaluationContext context) {
         final AnimationController.State nextState = definition.getStates().get(stateName);
         if (nextState == null) {
-            LOGGER.warn("[AnimController] State '{}' not found in controller '{}'",
-                    stateName, definition.getIdentifier());
-            return;
+            throw new IllegalStateException("State '" + stateName + "' not found in controller '"
+                    + definition.getIdentifier() + "'");
         }
 
         if (currentState != null) {
@@ -364,9 +364,9 @@ public class AnimationControllerInstance {
 
             final StatePlayback playback = createPlayback(identifier, context);
             if (playback == null) {
-                LOGGER.debug("[AnimController] Animation or controller '{}' ({}) not found",
-                        stateAnimation.shortName(), identifier);
-                continue;
+                throw new IllegalStateException("Animation or controller '" + identifier
+                        + "' for short name '" + stateAnimation.shortName() + "' not found in controller '"
+                        + definition.getIdentifier() + "', state '" + currentStateName + "'");
             }
 
             MoLangEngine.CompiledExpression blendWeight = null;
@@ -375,8 +375,11 @@ public class AnimationControllerInstance {
                 try {
                     blendWeight = MoLangEngine.compile(stateAnimation.blendWeightExpression());
                 } catch (IOException e) {
-                    LOGGER.warn("[AnimController] Failed to parse blend weight '{}' for '{}'",
-                            stateAnimation.blendWeightExpression(), stateAnimation.shortName(), e);
+                    throw new IllegalArgumentException(
+                            "Invalid blend weight in controller '" + definition.getIdentifier()
+                                    + "', state '" + currentStateName + "', animation '"
+                                    + stateAnimation.shortName() + "': "
+                                    + stateAnimation.blendWeightExpression(), e);
                 }
             }
             stateEntries.add(new PlaybackEntry(identifier, playback, blendWeight));
@@ -419,20 +422,22 @@ public class AnimationControllerInstance {
             try {
                 MoLangEngine.eval(scope, context, expression);
             } catch (Throwable e) {
-                LOGGER.debug("[AnimController] Failed to execute script: {}", expression, e);
+                throw new IllegalStateException("Failed to execute controller script in '"
+                        + definition.getIdentifier() + "', state '" + currentStateName + "': " + expression, e);
             }
         }
     }
 
-    private static float evalBlendWeight(MoLangEngine.CompiledExpression expression,
-                                         Scope scope, MoLangEvaluationContext context) {
+    private float evalBlendWeight(MoLangEngine.CompiledExpression expression,
+                                  Scope scope, MoLangEvaluationContext context) {
         if (expression == null) {
             return 1.0F;
         }
         try {
             return (float) MoLangEngine.eval(scope, context, expression).getAsNumber();
         } catch (Throwable e) {
-            return 1.0F;
+            throw new IllegalStateException("Failed to evaluate blend weight in controller '"
+                    + definition.getIdentifier() + "', state '" + currentStateName + "'", e);
         }
     }
 
