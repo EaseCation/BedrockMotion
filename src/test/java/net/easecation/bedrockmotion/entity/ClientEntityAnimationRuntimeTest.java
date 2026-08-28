@@ -88,6 +88,34 @@ class ClientEntityAnimationRuntimeTest {
     }
 
     @Test
+    void controllerStateSkipsOptionalAliasMissingFromEntity() throws Exception {
+        final Content pack = animationsPack();
+        pack.putString("animation_controllers/player.json", """
+                {"format_version":"1.10.0","animation_controllers":{
+                  "controller.test.root":{"initial_state":"default","states":{
+                    "default":{"animations":[
+                      {"optional":"v.enable_optional"},
+                      "override"
+                    ]}}}
+                }}
+                """);
+        final BedrockEntityData entity = entity(List.of(), List.of(),
+                List.of(new BedrockEntityData.Scripts.Animate("root", "")),
+                Map.of(
+                        "root", "controller.test.root",
+                        "override", "animation.test.override"));
+        final Scope scope = scope();
+        final ClientEntityAnimationRuntime runtime = runtime(entity, Map.of(), pack);
+
+        runtime.tick(0L, scope, MoLangEvaluationContext.EMPTY, ignored -> {
+        });
+        final TestModel model = new TestModel("root");
+        runtime.sample(model, 0.0F, scope, MoLangEvaluationContext.EMPTY);
+
+        assertEquals(60.0F, model.bone("root").getRotation().x, 1.0e-4F);
+    }
+
+    @Test
     void missingAliasAndMissingDefinitionFailAtConstruction() {
         final BedrockEntityData missingAlias = entity(List.of(), List.of(),
                 List.of(new BedrockEntityData.Scripts.Animate("root", "")), Map.of());

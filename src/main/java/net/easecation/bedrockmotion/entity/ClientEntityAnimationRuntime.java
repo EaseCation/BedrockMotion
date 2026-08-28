@@ -249,8 +249,10 @@ public final class ClientEntityAnimationRuntime {
                     compile(controller.getIdentifier() + '.' + stateName + ".animations."
                             + animation.shortName(), animation.blendWeightExpression());
                 }
-                final String childIdentifier = requireAlias(animation.shortName(),
-                        controller.getIdentifier() + '.' + stateName);
+                final String childIdentifier = animationAliases.get(animation.shortName());
+                if (childIdentifier == null || childIdentifier.isBlank()) {
+                    continue;
+                }
                 validateDefinition(childIdentifier,
                         controller.getIdentifier() + '.' + stateName + '.' + animation.shortName(), path);
             }
