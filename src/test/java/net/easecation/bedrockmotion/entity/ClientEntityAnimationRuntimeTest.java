@@ -12,6 +12,7 @@ import org.joml.Vector3f;
 import org.junit.jupiter.api.Test;
 import team.unnamed.mocha.runtime.Scope;
 import team.unnamed.mocha.runtime.value.MutableObjectBinding;
+import team.unnamed.mocha.runtime.value.Value;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -55,7 +56,7 @@ class ClientEntityAnimationRuntimeTest {
         assertTrue(runtime.tick(11L, scope, MoLangEvaluationContext.EMPTY,
                 ignored -> variables.set("host_input", team.unnamed.mocha.runtime.value.Value.of(6.0D))));
         assertEquals(1.0D, variables.get("initialized").getAsNumber());
-        assertEquals(2.0D, variables.get("pre_count").getAsNumber());
+        assertEquals(3.0D, variables.get("pre_count").getAsNumber());
         assertEquals(6.0D, variables.get("observed_input").getAsNumber());
     }
 
@@ -237,6 +238,44 @@ class ClientEntityAnimationRuntimeTest {
         runtime.sample(model, 0.5F, scope, MoLangEvaluationContext.EMPTY);
         assertEquals(List.of("v.event = 1"), listener.timeline);
         assertEquals(15.0F, model.bone("root").getRotation().x, 1.0e-4F);
+    }
+
+    @Test
+    void preAnimationIsPreparedForEachDistinctRenderFrame() throws Exception {
+        final Content pack = new Content();
+        pack.putString("animations/frame.json", """
+                {"format_version":"1.10.0","animations":{
+                  "animation.test.frame":{"loop":true,
+                    "bones":{"root":{"rotation":["v.frame_alpha * 100",0,0]}}}
+                }}
+                """);
+        final BedrockEntityData entity = entity(List.of(),
+                List.of("v.pre_animation_count = v.pre_animation_count + 1;",
+                        "v.frame_alpha = q.frame_alpha;"),
+                List.of(new BedrockEntityData.Scripts.Animate("frame", "")),
+                Map.of("frame", "animation.test.frame"));
+        final Scope scope = scope();
+        final MutableObjectBinding query = (MutableObjectBinding) scope.get("query");
+        final MutableObjectBinding variables = (MutableObjectBinding) scope.get("variable");
+        final ClientEntityAnimationRuntime runtime = runtime(entity, Map.of(), pack);
+        final TestModel model = new TestModel("root");
+
+        query.set("frame_alpha", Value.of(0.0F));
+        runtime.tick(12L, scope, MoLangEvaluationContext.EMPTY, ignored -> {
+        });
+        runtime.sample(model, 0.0F, scope, MoLangEvaluationContext.EMPTY);
+        assertEquals(0.0F, model.bone("root").getRotation().x, 1.0e-4F);
+        assertEquals(1.0D, variables.get("pre_animation_count").getAsNumber());
+
+        query.set("frame_alpha", Value.of(0.5F));
+        runtime.sample(model, 0.5F, scope, MoLangEvaluationContext.EMPTY);
+        assertEquals(50.0F, model.bone("root").getRotation().x, 1.0e-4F);
+        assertEquals(2.0D, variables.get("pre_animation_count").getAsNumber());
+
+        runtime.sample(model, 0.5F, scope, MoLangEvaluationContext.EMPTY);
+        assertEquals(50.0F, model.bone("root").getRotation().x, 1.0e-4F);
+        assertEquals(2.0D, variables.get("pre_animation_count").getAsNumber());
+        assertEquals(12L, runtime.lastTick());
     }
 
     private static ClientEntityAnimationRuntime runtime(BedrockEntityData entity,

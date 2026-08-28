@@ -42,6 +42,8 @@ public final class ClientEntityAnimationRuntime {
     private List<ActivePlayback> activePlayback = List.of();
     private boolean initialized;
     private long lastTick = Long.MIN_VALUE;
+    private long preparedFrameTick = Long.MIN_VALUE;
+    private int preparedPartialTickBits = Float.floatToIntBits(Float.NaN);
     private Scale rootScale = Scale.ONE;
 
     public ClientEntityAnimationRuntime(BedrockEntityData entity,
@@ -81,8 +83,7 @@ public final class ClientEntityAnimationRuntime {
             initialized = true;
         }
         Objects.requireNonNull(bindHostInputs, "bindHostInputs").accept(scope);
-        evaluateAll(preAnimationScripts, scope, context);
-        rootScale = scaleExpressions.evaluate(scope, context);
+        prepareFrame(scope, context);
 
         final List<ActivePlayback> next = new ArrayList<>();
         for (AnimateScript script : animateScripts) {
@@ -122,6 +123,10 @@ public final class ClientEntityAnimationRuntime {
     public void sample(IBoneModel model, float partialTick, Scope scope,
                        MoLangEvaluationContext context) throws IOException {
         clock.sample(partialTick);
+        final int partialTickBits = Float.floatToIntBits(clock.partialTick());
+        if (preparedFrameTick != clock.tick() || preparedPartialTickBits != partialTickBits) {
+            prepareFrame(scope, context);
+        }
         model.resetAllBones();
         for (ActivePlayback playback : activePlayback) {
             if (playback.type == PlaybackType.CONTROLLER) {
@@ -136,6 +141,13 @@ public final class ClientEntityAnimationRuntime {
                 animator.animate(model, false);
             }
         }
+    }
+
+    private void prepareFrame(Scope scope, MoLangEvaluationContext context) {
+        evaluateAll(preAnimationScripts, scope, context);
+        rootScale = scaleExpressions.evaluate(scope, context);
+        preparedFrameTick = clock.tick();
+        preparedPartialTickBits = Float.floatToIntBits(clock.partialTick());
     }
 
     public Map<String, String> animationAliases() {
