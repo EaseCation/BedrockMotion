@@ -111,6 +111,34 @@ public class AnimationControllerInstance {
         return currentStateName;
     }
 
+    public float controllerBlendWeight() {
+        return controllerBlendWeight;
+    }
+
+    public boolean isDonePlaying() {
+        return currentState == null || allStateEntriesFinished();
+    }
+
+    /** Immutable read-only state used by client diagnostics; it does not advance or sample playback. */
+    public ControllerDebugSnapshot debugSnapshot() {
+        final List<PlaybackDebugSnapshot> entries = stateEntries.stream()
+                .map(entry -> new PlaybackDebugSnapshot(
+                        entry.identifier,
+                        entry.baseWeight,
+                        entry.playback.isDonePlaying(),
+                        entry.playback instanceof ControllerPlayback nested
+                                ? nested.controller().debugSnapshot() : null))
+                .toList();
+        return new ControllerDebugSnapshot(
+                definition.getIdentifier(),
+                currentStateName,
+                controllerBlendWeight,
+                lastIncomingFactor,
+                (clock.timeMillis() - stateEnteredMS) / 1000.0F,
+                entries,
+                fadingStates.size());
+    }
+
     private void preParseAllTransitions() {
         for (Map.Entry<String, AnimationController.State> entry : definition.getStates().entrySet()) {
             final List<ParsedTransition> parsed = new ArrayList<>();
@@ -499,6 +527,20 @@ public class AnimationControllerInstance {
         void animate(IBoneModel model, boolean fireEvents) throws IOException;
 
         boolean isDonePlaying();
+    }
+
+    public record ControllerDebugSnapshot(String identifier, String stateName,
+                                          float blendWeight, float incomingFactor,
+                                          float stateTimeSeconds,
+                                          List<PlaybackDebugSnapshot> entries,
+                                          int fadingStateCount) {
+        public ControllerDebugSnapshot {
+            entries = List.copyOf(entries);
+        }
+    }
+
+    public record PlaybackDebugSnapshot(String identifier, float baseWeight,
+                                        boolean done, ControllerDebugSnapshot childController) {
     }
 
     private record AnimatorPlayback(Animator animator) implements StatePlayback {

@@ -86,6 +86,15 @@ class ClientEntityAnimationRuntimeTest {
         runtime.sample(model, 0.0F, scope, MoLangEvaluationContext.EMPTY);
 
         assertEquals(30.0F, model.bone("root").getRotation().x, 1.0e-4F);
+        final ClientEntityAnimationRuntime.DebugSnapshot debug = runtime.debugSnapshot();
+        assertEquals(1, debug.playbacks().size());
+        assertEquals("root", debug.playbacks().get(0).shortName());
+        assertEquals("CONTROLLER", debug.playbacks().get(0).type());
+        assertEquals("controller.test.root", debug.playbacks().get(0).resolvedIdentifier());
+        assertEquals("controller.test.root", debug.controllers().get(0).identifier());
+        assertEquals("default", debug.controllers().get(0).stateName());
+        assertEquals("controller.test.child",
+                debug.controllers().get(0).entries().get(0).childController().identifier());
     }
 
     @Test

@@ -163,6 +163,31 @@ public final class ClientEntityAnimationRuntime {
         return lastTick;
     }
 
+    /** Returns the current controller/playback state without advancing the runtime. */
+    public DebugSnapshot debugSnapshot() {
+        final List<PlaybackDebugSnapshot> playbacks = activePlayback.stream()
+                .map(playback -> {
+                    final String resolvedIdentifier = animationAliases.get(playback.shortName());
+                    if (playback.type() == PlaybackType.CONTROLLER) {
+                        final AnimationControllerInstance controller = controllers.get(playback.shortName());
+                        return new PlaybackDebugSnapshot(playback.shortName(), playback.type().name(),
+                                resolvedIdentifier, controller != null && controller.isDonePlaying(),
+                                controller == null ? 0.0F : controller.controllerBlendWeight());
+                    }
+                    final Animator animator = animators.get(playback.shortName());
+                    return new PlaybackDebugSnapshot(playback.shortName(), playback.type().name(),
+                            resolvedIdentifier, animator != null && animator.isDonePlaying(),
+                            animator == null ? 0.0F : animator.getBlendWeight());
+                })
+                .toList();
+        final List<AnimationControllerInstance.ControllerDebugSnapshot> controllerSnapshots =
+                controllers.values().stream()
+                        .map(AnimationControllerInstance::debugSnapshot)
+                        .toList();
+        return new DebugSnapshot(lastTick, clock.partialTick(), preparedFrameTick,
+                preparedPartialTickBits, rootScale, playbacks, controllerSnapshots);
+    }
+
     private List<AnimateScript> compileAnimates(List<BedrockEntityData.Scripts.Animate> animates) {
         final List<AnimateScript> compiled = new ArrayList<>(animates.size());
         for (BedrockEntityData.Scripts.Animate animate : animates) {
@@ -317,5 +342,19 @@ public final class ClientEntityAnimationRuntime {
 
     public record Scale(float x, float y, float z) {
         public static final Scale ONE = new Scale(1.0F, 1.0F, 1.0F);
+    }
+
+    public record DebugSnapshot(long lastTick, float partialTick,
+                                long preparedFrameTick, int preparedPartialTickBits,
+                                Scale rootScale, List<PlaybackDebugSnapshot> playbacks,
+                                List<AnimationControllerInstance.ControllerDebugSnapshot> controllers) {
+        public DebugSnapshot {
+            playbacks = List.copyOf(playbacks);
+            controllers = List.copyOf(controllers);
+        }
+    }
+
+    public record PlaybackDebugSnapshot(String shortName, String type, String resolvedIdentifier,
+                                        boolean done, float blendWeight) {
     }
 }
