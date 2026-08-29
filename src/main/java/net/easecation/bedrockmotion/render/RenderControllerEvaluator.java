@@ -164,13 +164,16 @@ public class RenderControllerEvaluator {
                 final String geometryName = inverseGeometryMap.get(geometryValue);
 
                 final LinkedHashMap<String, String> materials = new LinkedHashMap<>();
+                final List<String> materialValues = new ArrayList<>();
                 for (Map.Entry<String, String> material : renderController.materialsMap().entrySet()) {
                     try {
                         final String value = MoLangEngine.eval(materialScope, context, material.getValue()).getAsString();
+                        materialValues.add(value);
                         materials.put(material.getKey(), inverseMaterialMap.getOrDefault(value, value));
                     } catch (Throwable e) {
                         // Tolerate a single broken material expression: keep the raw name and continue.
                         LOGGER.warn("Failed to evaluate render controller material '{}'", material.getValue(), e);
+                        materialValues.add(material.getValue());
                         materials.put(material.getKey(), material.getValue());
                     }
                 }
@@ -185,7 +188,11 @@ public class RenderControllerEvaluator {
                     }
                 }
 
-                final MaterialState materialState = MaterialState.from(materials.values());
+                // Keep the public per-bone map keyed by resource short names, but derive
+                // render semantics from the evaluated material identifiers. Otherwise
+                // Material.default becomes the literal string "default" and loses the
+                // entity_alphatest -> entity_nocull inheritance.
+                final MaterialState materialState = MaterialState.from(materialValues);
                 final int colorArgb = evaluateColor(scope, context, renderController.colorExpressions());
 
                 final List<String> textureValues = new ArrayList<>();
@@ -301,7 +308,11 @@ public class RenderControllerEvaluator {
             BlendMode blendMode = BlendMode.OPAQUE;
             for (String materialName : materialNames) {
                 final String name = materialName.toLowerCase(Locale.ROOT);
-                cull &= !name.contains("no_cull") && !name.contains("double_sided");
+                // Bedrock's entity_alphatest material is defined as
+                // entity_alphatest:entity_nocull. Keep the explicit one-sided
+                // variants culled while preserving the base material's two-sided
+                // texture-mesh behavior.
+                cull &= materialCulls(name);
                 emissive |= name.contains("emissive");
                 glint |= name.contains("enchanted") || name.contains("glint");
                 if (name.contains("alpha_blend") || name.contains("blend") || name.contains("spectator")) {
@@ -312,6 +323,22 @@ public class RenderControllerEvaluator {
                 }
             }
             return new MaterialState(cull, blendMode, emissive, glint);
+        }
+
+        private static boolean materialCulls(String name) {
+            if (name.contains("no_cull") || name.contains("double_sided")) {
+                return false;
+            }
+            if (name.equals("entity_alphatest")
+                    || name.equals("entity_alphatest_glint")
+                    || name.equals("entity_alphatest_glint_item")
+                    || name.equals("entity_alphatest_change_color")
+                    || name.equals("entity_alphatest_change_color_glint")
+                    || name.equals("item_in_hand_entity_alphatest")
+                    || name.equals("item_in_hand_entity_alphatest_color")) {
+                return false;
+            }
+            return true;
         }
     }
 }

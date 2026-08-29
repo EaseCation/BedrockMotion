@@ -149,6 +149,33 @@ class RenderControllerEvaluatorTest {
         assertEquals("controller.render.ec_gun", passes.getFirst().controller().identifier());
     }
 
+    @Test
+    void entityAlphaTestUsesBedrockTwoSidedMaterialSemantics() {
+        final BedrockRenderController controller = new BedrockRenderController(
+                "controller.render.ec_gun", Map.of("*", "Material.default"),
+                "Geometry.default", List.of("Texture.default"),
+                List.of(), List.of(), List.of(), Map.of(), Map.of(), false, 1.0F);
+
+        final List<RenderControllerEvaluator.EvaluatedRenderPass> doubleSided =
+                evaluate(definition(), controller, Scope.create());
+        assertEquals(1, doubleSided.size());
+        assertFalse(doubleSided.getFirst().cull());
+        assertEquals(RenderControllerEvaluator.BlendMode.ALPHA_TEST,
+                doubleSided.getFirst().blendMode());
+
+        final BedrockAttachableData resources = definition();
+        final Map<String, String> oneSidedMaterials = new LinkedHashMap<>(resources.getMaterials());
+        oneSidedMaterials.put("default", "entity_alphatest_one_sided");
+        final BedrockAttachableData oneSidedDefinition = new BedrockAttachableData(
+                resources.getIdentifier(), resources.getScripts(), resources.getControllers(),
+                oneSidedMaterials, resources.getAnimations(), resources.getTextures(),
+                resources.getGeometries(), resources.getParticleEffects(), resources.getItemConditions());
+        final List<RenderControllerEvaluator.EvaluatedRenderPass> oneSided =
+                evaluate(oneSidedDefinition, controller, Scope.create());
+        assertEquals(1, oneSided.size());
+        assertTrue(oneSided.getFirst().cull());
+    }
+
     private static List<RenderControllerEvaluator.EvaluatedRenderPass> evaluate(
             BedrockAttachableData definition, BedrockRenderController controller, Scope scope) {
         return RenderControllerEvaluator.evaluatePasses(
