@@ -61,7 +61,20 @@ public class AnimationHelper {
                 } else {
                     interp = lv2.interpolation();
                 }
-                interp.apply(scope, context, tempVec, k, lvs, i, j, scale);
+                final Vector3f current = transformation.target() == AnimateTransformation.Targets.ROTATE
+                        ? bone.getRotation()
+                        : transformation.target() == AnimateTransformation.Targets.OFFSET ? bone.getOffset() : null;
+                if (current == null) {
+                    interp.apply(scope, context, tempVec, k, lvs, i, j, scale);
+                } else {
+                    tempVec.set(
+                            AnimateTransformation.interpolateComponent(scope, context, lvs, i, j,
+                                    0, k, scale, current.x, interp),
+                            AnimateTransformation.interpolateComponent(scope, context, lvs, i, j,
+                                    1, k, scale, current.y, interp),
+                            AnimateTransformation.interpolateComponent(scope, context, lvs, i, j,
+                                    2, k, scale, current.z, interp));
+                }
                 transformation.target().apply(bone, tempVec, scale);
             }
         }

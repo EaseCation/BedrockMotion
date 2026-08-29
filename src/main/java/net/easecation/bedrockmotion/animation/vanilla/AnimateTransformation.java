@@ -3,6 +3,7 @@ package net.easecation.bedrockmotion.animation.vanilla;
 import net.easecation.bedrockmotion.model.IBoneTarget;
 import net.easecation.bedrockmotion.mocha.MoLangEngine;
 import net.easecation.bedrockmotion.mocha.MoLangEvaluationContext;
+import net.easecation.bedrockmotion.mocha.LayeredScope;
 import net.easecation.bedrockmotion.util.MathUtil;
 import org.joml.Vector3f;
 import team.unnamed.mocha.parser.ast.AccessExpression;
@@ -20,6 +21,8 @@ import java.util.Objects;
 public final class AnimateTransformation {
     private static final ThreadLocal<InterpolationScratch> INTERPOLATION_SCRATCH =
             ThreadLocal.withInitial(InterpolationScratch::new);
+    private static final ThreadLocal<LayeredScope> THIS_SCOPE =
+            ThreadLocal.withInitial(() -> new LayeredScope(Scope.create()));
     private final Target target;
     private final VBUKeyFrame[] keyframes;
     private final boolean immutable;
@@ -184,6 +187,57 @@ public final class AnimateTransformation {
             out[i] = ResolvedComponent.of(xyz[i]);
         }
         return out;
+    }
+
+    /** Samples one component while exposing Bedrock's {@code this} value for that axis. */
+    static float interpolateComponent(Scope parent, MoLangEvaluationContext context,
+                                      VBUKeyFrame[] keyframes, int start, int end,
+                                      int axis, float delta, float scale, float current,
+                                      Interpolation interpolation) {
+        final LayeredScope scope = THIS_SCOPE.get();
+        scope.reset(parent);
+        scope.set("this", Value.of(current));
+
+        final float first = evaluate(scope, context, keyframes[start].postInternal()[axis]);
+        final float second = evaluate(scope, context, keyframes[end].preInternal()[axis]);
+        final float value;
+        if (interpolation == Interpolations.STEP) {
+            value = first;
+        } else if (interpolation == Interpolations.CUBIC) {
+            final float before = start > 0 && !keyframes[start].hasSeparatePrePost()
+                    ? evaluate(scope, context, keyframes[start - 1].postInternal()[axis]) : first;
+            final float after = end < keyframes.length - 1 && !keyframes[end].hasSeparatePrePost()
+                    ? evaluate(scope, context, keyframes[end + 1].preInternal()[axis]) : second;
+            value = MathUtil.catmullRom(delta, before, first, second, after);
+        } else {
+            value = first + (second - first) * delta;
+        }
+        return value * scale;
+    }
+
+    private static float evaluate(Scope scope, MoLangEvaluationContext context,
+                                  ResolvedComponent component) {
+        if (component.constant()) {
+            return (float) component.value();
+        }
+        if (component.queryVar() != null) {
+            try {
+                final Value query = scope.getProperty("query").value();
+                if (query instanceof ObjectValue ov) {
+                    final ObjectProperty prop = ov.getProperty(component.queryVar());
+                    if (prop != null) {
+                        return (float) prop.value().getAsNumber();
+                    }
+                }
+            } catch (Exception ignored) {
+                // Fall through to full MoLang evaluation.
+            }
+        }
+        try {
+            return (float) MoLangEngine.eval(scope, context, component.exprInternal()).getAsNumber();
+        } catch (Exception ignored) {
+            return 0.0F;
+        }
     }
 
     public static class Interpolations {

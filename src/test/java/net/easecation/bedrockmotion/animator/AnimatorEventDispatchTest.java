@@ -23,6 +23,28 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 
 class AnimatorEventDispatchTest {
     @Test
+    void animationThisResolvesAgainstEachBoneComponent() throws Exception {
+        final Animation animation = Animation.parse(JsonParser.parseString("""
+                {"animations":{"animation.test.this":{"loop":true,
+                  "bones":{"rightarm":{"rotation":["-this","-this","-this"]}}}}}
+                """).getAsJsonObject()).getFirst();
+        final AnimationClock.Client clock = new AnimationClock.Client();
+        final RecordingListener listener = new RecordingListener();
+        final Animator animator = new Animator(listener,
+                new AnimationDefinitions.AnimationData(animation, AnimateBuilder.build(animation)), clock);
+        animator.setBaseScope(listener.scope);
+        final TestBoneModel model = new TestBoneModel();
+        model.rotation.set(20.0F, 30.0F, 40.0F);
+
+        animator.advance();
+        animator.animate(model, false);
+
+        assertEquals(0.0F, model.rotation.x, 1.0e-4F);
+        assertEquals(0.0F, model.rotation.y, 1.0e-4F);
+        assertEquals(0.0F, model.rotation.z, 1.0e-4F);
+    }
+
+    @Test
     void animTimeUpdateAdvancesOncePerDistinctRenderFrame() throws Exception {
         final Animation animation = Animation.parse(JsonParser.parseString("""
                 {"animations":{"animation.test.clock":{
