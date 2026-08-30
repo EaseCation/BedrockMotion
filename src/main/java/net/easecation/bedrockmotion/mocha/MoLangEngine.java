@@ -34,6 +34,7 @@ import team.unnamed.mocha.runtime.ExpressionInterpreter;
 import team.unnamed.mocha.runtime.Scope;
 import team.unnamed.mocha.runtime.value.MutableObjectBinding;
 import team.unnamed.mocha.runtime.value.NumberValue;
+import team.unnamed.mocha.runtime.value.Function;
 import team.unnamed.mocha.runtime.value.Value;
 
 import java.io.IOException;
@@ -59,6 +60,11 @@ public class MoLangEngine {
             ThreadLocal.withInitial(ResettableTempBinding::new);
 
     public static Value eval(final Scope scope, final String expression) throws IOException {
+        return eval(scope, MoLangEvaluationContext.EMPTY, expression);
+    }
+
+    public static Value eval(final Scope scope, final MoLangEvaluationContext context,
+                             final String expression) throws IOException {
         if (expression == null || expression.isEmpty()) {
             return NumberValue.zero();
         }
@@ -73,27 +79,53 @@ public class MoLangEngine {
             }
         }
 
-        return eval(scope, compile(expression));
+        return eval(scope, context, compile(expression));
     }
 
     public static Value eval(final Scope scope, final List<Expression> expressions) {
-        return evalExpressions(scope, expressions);
+        return eval(scope, MoLangEvaluationContext.EMPTY, expressions);
+    }
+
+    public static Value eval(final Scope scope, final MoLangEvaluationContext context,
+                             final List<Expression> expressions) {
+        return evalExpressions(scope, context, isActorAware(context) ? actorAwareExpressions(expressions) : expressions);
     }
 
     public static Value eval(final Scope scope, final CompiledExpression expression) {
-        return evalExpressions(scope, expression.expressions);
+        return eval(scope, MoLangEvaluationContext.EMPTY, expression);
     }
 
-    private static Value evalExpressions(final Scope scope, final List<Expression> expressions) {
+    public static Value eval(final Scope scope, final MoLangEvaluationContext context,
+                             final CompiledExpression expression) {
+        return evalExpressions(scope, context,
+                isActorAware(context) ? expression.actorAwareExpressions : expression.expressions);
+    }
+
+    private static boolean isActorAware(MoLangEvaluationContext context) {
+        return context != null && (context.actor() instanceof MoLangEvaluationContext.Actor
+                || context.ownerActor() instanceof MoLangEvaluationContext.Actor);
+    }
+
+    private static Value evalExpressions(final Scope scope, final MoLangEvaluationContext context,
+                                         final List<Expression> expressions) {
         final LayeredScope localScope = EVAL_SCOPE.get();
         localScope.reset(scope);
         final ResettableTempBinding tempBinding = EVAL_TEMP.get();
         tempBinding.resetTemp(); // drop any temp.* written by a previous eval before reuse
         localScope.set("temp", tempBinding);
         localScope.set("t", tempBinding);
+        localScope.set("__actor_variable", (Function<Object>) (execution, arguments) -> {
+            final Value name = arguments.next().eval();
+            if (execution.entity() instanceof MoLangEvaluationContext.Actor actor) {
+                final Value value = actor.variable(name.getAsString());
+                return value == null ? NumberValue.zero() : value;
+            }
+            return NumberValue.zero();
+        });
         localScope.readOnly(true);
 
-        final ExpressionInterpreter<Void> evaluator = new ExpressionInterpreter<>(null, localScope);
+        final ExpressionInterpreter<Object> evaluator =
+                new ExpressionInterpreter<>(Objects.requireNonNullElse(context, MoLangEvaluationContext.EMPTY).actor(), localScope);
         evaluator.warnOnReflectiveFunctionUsage(false);
 
         Value lastResult = NumberValue.zero();
@@ -171,9 +203,13 @@ public class MoLangEngine {
 
     public static final class CompiledExpression {
         private final List<Expression> expressions;
+        private final List<Expression> actorAwareExpressions;
 
         private CompiledExpression(final List<Expression> expressions) {
-            this.expressions = List.copyOf(expressions);
+            // Postfix precedence belongs to the Mocha parser. Keep only a detached copy here;
+            // the consumer must not rewrite parser output to compensate for parser behavior.
+            this.expressions = List.copyOf(MoLangEngine.copyExpressions(expressions));
+            this.actorAwareExpressions = List.copyOf(actorAwareExpressions(this.expressions));
         }
 
         /** Returns a fully detached tree because Mocha's AST nodes and child lists are mutable. */
@@ -205,6 +241,50 @@ public class MoLangEngine {
             copy.add(copyExpression(expression));
         }
         return copy;
+    }
+
+    private static List<Expression> actorAwareExpressions(final List<Expression> expressions) {
+        final List<Expression> transformed = new ArrayList<>(expressions.size());
+        for (Expression expression : expressions) {
+            transformed.add(actorAwareExpression(expression, false));
+        }
+        return transformed;
+    }
+
+    private static Expression actorAwareExpression(final Expression expression, final boolean assignmentTarget) {
+        if (expression instanceof AccessExpression access) {
+            if (!assignmentTarget && access.object() instanceof IdentifierExpression identifier
+                    && (identifier.name().equalsIgnoreCase("variable") || identifier.name().equalsIgnoreCase("v"))) {
+                return new CallExpression(new IdentifierExpression("__actor_variable"),
+                        List.of(new StringExpression(access.property())));
+            }
+            return new AccessExpression(actorAwareExpression(access.object(), assignmentTarget), access.property());
+        }
+        if (expression instanceof ArrayAccessExpression arrayAccess) {
+            return new ArrayAccessExpression(actorAwareExpression(arrayAccess.array(), false),
+                    actorAwareExpression(arrayAccess.index(), false));
+        }
+        if (expression instanceof BinaryExpression binary) {
+            final boolean assign = binary.op() == BinaryExpression.Op.ASSIGN;
+            return new BinaryExpression(binary.op(), actorAwareExpression(binary.left(), assign),
+                    actorAwareExpression(binary.right(), false));
+        }
+        if (expression instanceof CallExpression call) {
+            return new CallExpression(actorAwareExpression(call.function(), false),
+                    actorAwareExpressions(call.arguments()));
+        }
+        if (expression instanceof ExecutionScopeExpression executionScope) {
+            return new ExecutionScopeExpression(actorAwareExpressions(executionScope.expressions()));
+        }
+        if (expression instanceof TernaryConditionalExpression ternary) {
+            return new TernaryConditionalExpression(actorAwareExpression(ternary.condition(), false),
+                    actorAwareExpression(ternary.trueExpression(), false),
+                    actorAwareExpression(ternary.falseExpression(), false));
+        }
+        if (expression instanceof UnaryExpression unary) {
+            return new UnaryExpression(unary.op(), actorAwareExpression(unary.expression(), false));
+        }
+        return copyExpression(expression);
     }
 
     private static Expression copyExpression(final Expression expression) {

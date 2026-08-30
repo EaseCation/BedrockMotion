@@ -3,6 +3,7 @@ package net.easecation.bedrockmotion.animation.vanilla;
 import net.easecation.bedrockmotion.animation.Animation;
 import net.easecation.bedrockmotion.model.IBoneModel;
 import net.easecation.bedrockmotion.model.IBoneTarget;
+import net.easecation.bedrockmotion.mocha.MoLangEvaluationContext;
 import net.easecation.bedrockmotion.util.MathUtil;
 import org.joml.Vector3f;
 import team.unnamed.mocha.runtime.Scope;
@@ -13,6 +14,12 @@ import java.util.Map;
 public class AnimationHelper {
     public static void animate(Scope scope, IBoneModel model, VBUAnimation animation, long runningTime, float scale, Vector3f tempVec,
                                Map<String, IBoneTarget> boneIndex) {
+        animate(scope, MoLangEvaluationContext.EMPTY, model, animation, runningTime, scale, tempVec, boneIndex);
+    }
+
+    public static void animate(Scope scope, MoLangEvaluationContext context,
+                               IBoneModel model, VBUAnimation animation, long runningTime, float scale,
+                               Vector3f tempVec, Map<String, IBoneTarget> boneIndex) {
         float g = AnimationHelper.getRunningSeconds(animation, runningTime);
         Map<String, IBoneTarget> index = boneIndex != null ? boneIndex : model.getBoneIndex();
 
@@ -54,7 +61,20 @@ public class AnimationHelper {
                 } else {
                     interp = lv2.interpolation();
                 }
-                interp.apply(scope, tempVec, k, lvs, i, j, scale);
+                final Vector3f current = transformation.target() == AnimateTransformation.Targets.ROTATE
+                        ? bone.getRotation()
+                        : transformation.target() == AnimateTransformation.Targets.OFFSET ? bone.getOffset() : null;
+                if (current == null) {
+                    interp.apply(scope, context, tempVec, k, lvs, i, j, scale);
+                } else {
+                    tempVec.set(
+                            AnimateTransformation.interpolateComponent(scope, context, lvs, i, j,
+                                    0, k, scale, current.x, interp),
+                            AnimateTransformation.interpolateComponent(scope, context, lvs, i, j,
+                                    1, k, scale, current.y, interp),
+                            AnimateTransformation.interpolateComponent(scope, context, lvs, i, j,
+                                    2, k, scale, current.z, interp));
+                }
                 transformation.target().apply(bone, tempVec, scale);
             }
         }

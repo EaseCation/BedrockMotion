@@ -8,6 +8,7 @@ base.archivesName = 'BedrockMotion'
 version = '1.0.0'
 
 repositories {
+    mavenLocal()
     mavenCentral()
     maven { url 'https://repo.viaversion.com' }
     maven { url 'https://jitpack.io' }
@@ -20,7 +21,7 @@ java {
 }
 
 dependencies {
-    api 'team.unnamed:mocha:3.0.1'
+    api 'team.unnamed:mocha:3.0.2'
     // 不再 transitive=false:需要让 CubeConverter 的 compileOnlyApi(ViaProxy 侧 relocated gson)
     // 透传到本工程 compile classpath,以解析其解析器重载签名。CubeConverter 仅 compileOnlyApi 会传递
     // (其余为 implementation,不外泄;plain 分支无 api 依赖),不影响运行期与 NeoForge。
