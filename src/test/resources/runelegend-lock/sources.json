@@ -1,0 +1,15 @@
+{
+  "note": "fixtures preserve original JSON values; whitespace is compacted",
+  "originalSha256": {
+    "animations/rl_ghosarea_boss_babylon.animation.json": "a0eb51eb8c95c965f80335db2ed55eb55a42ff62f078c0647276398b951f2d78",
+    "animations/ghosarea_malefic_eye.animation.json": "89daa95bb4a5fdf1d15a20b27667b53f1fd76af9a7b235ea69b44080b1227e49",
+    "animations/rl_ghosarea_boss_babylon_ally.animation.json": "491850034efc5848dec11acc7d37aef9d51a4dd489274a81eef2d03e2539073c",
+    "animations/rl_ghosarea_boss_lock.animation.json": "b66daaa5013d9fe27decc51e972087cfff13a12b0ec01c24b253c4022b4a4318",
+    "animations/rl_ghosarea_boss_babylon_spear_formation.animation.json": "e59725874f4e3aedbe4cfa880c33522110f04e4826c1328a95f3da72d0a31167",
+    "animations/rl_ghosarea_boss_woodsprites_2.animation.json": "10b5e454c2afd2d5c4be2310426cb7635750f7a08ef9e45b0a3d353730dc610e",
+    "animations/rl_ghosarea_vinewall.animation.json": "56ba6ff33a55a638a354f16e5ac14274ae9582746e27f32566c40aa062287b83",
+    "animations/rl_ghosarea_boss_woodsprites_1.animation.json": "0f5a10e2b05631e293855be63564c09abb509abcd4ee475ffa5887946a677ec5",
+    "animation_controllers/rl_ghosarea_boss_lock.animation_controllers.json": "7c71b748a39bacee61a4562f7a25f8a00f13dd2a8a866b80823d1c71f488b4cd",
+    "entity/rl_ghosarea_boss_lock.entity.json": "df408da1f309e4405223ab9ce3909a085032204733864df16762f6fd59cd1f2b"
+  }
+}

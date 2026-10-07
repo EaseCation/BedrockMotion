@@ -33,12 +33,27 @@ public class AnimationHelper {
             List<AnimateTransformation> list = entry.getValue();
             for (AnimateTransformation transformation : list) {
                 VBUKeyFrame[] lvs = transformation.keyframesInternal();
+                if (lvs.length == 0) {
+                    continue;
+                }
+                final Vector3f current = transformation.target() == AnimateTransformation.Targets.ROTATE
+                        ? bone.getRotation()
+                        : transformation.target() == AnimateTransformation.Targets.OFFSET ? bone.getOffset() : null;
+                // 首帧前取 pre，关键帧时刻及末帧后取 post；禁止在跳变点混入另一侧。
+                if (g < lvs[0].timestamp() || g >= lvs[lvs.length - 1].timestamp()) {
+                    final boolean beforeFirst = g < lvs[0].timestamp();
+                    final VBUKeyFrame endpoint = beforeFirst ? lvs[0] : lvs[lvs.length - 1];
+                    AnimateTransformation.sampleKeyframe(scope, context, tempVec,
+                            beforeFirst ? endpoint.preInternal() : endpoint.postInternal(), scale, current);
+                    transformation.target().apply(bone, tempVec, scale);
+                    continue;
+                }
                 int i = Math.max(0, MathUtil.binarySearch(0, lvs.length, idx -> {
                     if (lvs[idx] == null) {
                         return false;
                     }
 
-                    return g <= lvs[idx].timestamp();
+                    return g < lvs[idx].timestamp();
                 }) - 1);
                 int j = Math.min(lvs.length - 1, i + 1);
                 if (lvs[i] == null || lvs[j] == null) {
@@ -50,20 +65,9 @@ public class AnimationHelper {
                 float h = g - lv.timestamp();
                 float k = j != i ? MathUtil.clamp(h / (lv2.timestamp() - lv.timestamp()), 0.0f, 1.0f) : 1F;
 
-                // Select interpolation type following Blockbench logic:
-                // step takes priority, then catmullrom if either side uses it
-                AnimateTransformation.Interpolation interp;
-                if (lv.interpolation() == AnimateTransformation.Interpolations.STEP) {
-                    interp = AnimateTransformation.Interpolations.STEP;
-                } else if (lv.interpolation() == AnimateTransformation.Interpolations.CUBIC
-                        || lv2.interpolation() == AnimateTransformation.Interpolations.CUBIC) {
-                    interp = AnimateTransformation.Interpolations.CUBIC;
-                } else {
-                    interp = lv2.interpolation();
-                }
-                final Vector3f current = transformation.target() == AnimateTransformation.Targets.ROTATE
-                        ? bone.getRotation()
-                        : transformation.target() == AnimateTransformation.Targets.OFFSET ? bone.getOffset() : null;
+                // 原生由区间起点选择插值方式，终点的模式只影响下一段。
+                // Blockbench 的相邻任一侧为 cubic 即启用 cubic，与原生此处不同。
+                final AnimateTransformation.Interpolation interp = lv.interpolation();
                 if (current == null) {
                     interp.apply(scope, context, tempVec, k, lvs, i, j, scale);
                 } else {

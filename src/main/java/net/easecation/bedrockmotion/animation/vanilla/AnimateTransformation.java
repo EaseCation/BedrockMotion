@@ -240,6 +240,24 @@ public final class AnimateTransformation {
         }
     }
 
+    static void sampleKeyframe(Scope parent, MoLangEvaluationContext context, Vector3f dest,
+                               ResolvedComponent[] components, float weight, Vector3f current) {
+        if (current == null) {
+            eval(parent, context, components, dest);
+            dest.mul(weight);
+            return;
+        }
+        final LayeredScope scope = THIS_SCOPE.get();
+        scope.reset(parent);
+        scope.set("this", Value.of(current.x));
+        final float x = evaluate(scope, context, components[0]);
+        scope.set("this", Value.of(current.y));
+        final float y = evaluate(scope, context, components[1]);
+        scope.set("this", Value.of(current.z));
+        final float z = evaluate(scope, context, components[2]);
+        dest.set(x * weight, y * weight, z * weight);
+    }
+
     public static class Interpolations {
         public static final Interpolation LINEAR = contextual((scope, context, dest, delta, keyframes, start, end, scale) -> {
             final InterpolationScratch scratch = INTERPOLATION_SCRATCH.get();
@@ -329,11 +347,12 @@ public final class AnimateTransformation {
         public static final Target OFFSET = (bone, vec3, weight) -> bone.addOffset(vec3);
         public static final Target ROTATE = (bone, vec3, weight) -> bone.addRotation(vec3);
         public static final Target SCALE = (bone, vec3, weight) -> {
-            // Additive scale relative to 1.0: final = 1.0 + sum((anim_scale - 1.0) * weight)
-            // Interpolation already computed vec3 = interpolated_value * weight,
-            // so (interpolated_value - 1.0) * weight = vec3 - weight
+            // 原生缩放逐层相乘；vec3 已乘权重，补上单位缩放的剩余贡献。
+            // 不能累加缩放差值，否则多个隐藏动画会把零缩放变为可见的负缩放。
             if (weight > 0) {
-                bone.addScale(vec3.x - weight, vec3.y - weight, vec3.z - weight);
+                bone.setScale(bone.getScaleX() * (1.0F + vec3.x - weight),
+                        bone.getScaleY() * (1.0F + vec3.y - weight),
+                        bone.getScaleZ() * (1.0F + vec3.z - weight));
             }
         };
     }
