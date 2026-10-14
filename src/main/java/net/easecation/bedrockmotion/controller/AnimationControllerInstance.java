@@ -49,6 +49,8 @@ public class AnimationControllerInstance {
     private AnimationController.State currentState;
     private final List<PlaybackEntry> stateEntries = new ArrayList<>();
     private final Map<String, List<ParsedTransition>> parsedTransitionsByState = new java.util.HashMap<>();
+    private final Map<String, AnimationController.State> runtimeStates = new java.util.LinkedHashMap<>();
+    private final Map<String, String> runtimeAnimations = new java.util.HashMap<>();
     private final List<FadingState> fadingStates = new ArrayList<>();
 
     @Setter
@@ -111,6 +113,51 @@ public class AnimationControllerInstance {
         return currentStateName;
     }
 
+    /** 修改当前实体的运行时状态，不改写资源包中共享的控制器定义。 */
+    public void playAnimation(String animation, String nextState, String stopExpression,
+                              float blendOutTime, Scope scope, MoLangEvaluationContext context) {
+        final String identifier = animationDefinitions.getAnimations().containsKey(animation)
+                ? animation : entityAnimations.get(animation);
+        if (identifier == null || !animationDefinitions.getAnimations().containsKey(identifier)) {
+            throw new IllegalArgumentException("Unknown animation '" + animation + "'");
+        }
+        if (!Float.isFinite(blendOutTime) || blendOutTime < 0.0F) {
+            throw new IllegalArgumentException("Invalid animation blend-out time");
+        }
+        final AnimationController.State previous = state(animation);
+        final List<AnimationController.Transition> transitions = new ArrayList<>(
+                previous == null ? List.of() : previous.getTransitions());
+        if (!nextState.isEmpty() && !stopExpression.isEmpty()) {
+            transitions.add(new AnimationController.Transition(nextState, stopExpression));
+        }
+        final List<ParsedTransition> parsed = parseTransitions(animation, transitions);
+        final AnimationController.State replacement = new AnimationController.State(
+                List.of(new AnimationController.StateAnimation(animation, "")), transitions,
+                previous == null ? List.of() : previous.getOnEntry(),
+                previous == null ? List.of() : previous.getOnExit(),
+                previous == null ? List.of() : previous.getParticleEffects(),
+                previous == null ? List.of() : previous.getSoundEffects(),
+                BlendTransitionCurve.ofDuration(blendOutTime),
+                previous != null && previous.isBlendViaShortestPath());
+        if (!nextState.isEmpty() && state(nextState) == null) {
+            runtimeStates.put(nextState, emptyState());
+            parsedTransitionsByState.put(nextState, List.of());
+        }
+        runtimeAnimations.put(animation, identifier);
+        runtimeStates.put(animation, replacement);
+        parsedTransitionsByState.put(animation, parsed);
+        enterState(animation, scope, context);
+    }
+
+    public static AnimationController.State emptyState() {
+        return new AnimationController.State(List.of(), List.of(), List.of(), List.of(), List.of(),
+                BlendTransitionCurve.NONE, false);
+    }
+
+    private AnimationController.State state(String name) {
+        return runtimeStates.getOrDefault(name, definition.getStates().get(name));
+    }
+
     public float controllerBlendWeight() {
         return controllerBlendWeight;
     }
@@ -141,19 +188,25 @@ public class AnimationControllerInstance {
 
     private void preParseAllTransitions() {
         for (Map.Entry<String, AnimationController.State> entry : definition.getStates().entrySet()) {
-            final List<ParsedTransition> parsed = new ArrayList<>();
-            for (AnimationController.Transition transition : entry.getValue().getTransitions()) {
-                try {
-                    parsed.add(new ParsedTransition(
-                            transition.targetState(), MoLangEngine.compile(transition.condition())));
-                } catch (IOException e) {
-                    throw new IllegalArgumentException(
-                            "Invalid transition condition in controller '" + definition.getIdentifier()
-                                    + "', state '" + entry.getKey() + "': " + transition.condition(), e);
-                }
-            }
-            parsedTransitionsByState.put(entry.getKey(), parsed);
+            parsedTransitionsByState.put(entry.getKey(), parseTransitions(
+                    entry.getKey(), entry.getValue().getTransitions()));
         }
+    }
+
+    private List<ParsedTransition> parseTransitions(String stateName,
+                                                    List<AnimationController.Transition> transitions) {
+        final List<ParsedTransition> parsed = new ArrayList<>();
+        for (AnimationController.Transition transition : transitions) {
+            try {
+                parsed.add(new ParsedTransition(
+                        transition.targetState(), MoLangEngine.compile(transition.condition())));
+            } catch (IOException e) {
+                throw new IllegalArgumentException(
+                        "Invalid transition condition in controller '" + definition.getIdentifier()
+                                + "', state '" + stateName + "': " + transition.condition(), e);
+            }
+        }
+        return parsed;
     }
 
     public void setBaseScope(Scope frameScope) {
@@ -361,7 +414,7 @@ public class AnimationControllerInstance {
     }
 
     private void enterState(String stateName, Scope scope, MoLangEvaluationContext context) {
-        final AnimationController.State nextState = definition.getStates().get(stateName);
+        final AnimationController.State nextState = state(stateName);
         if (nextState == null) {
             throw new IllegalStateException("State '" + stateName + "' not found in controller '"
                     + definition.getIdentifier() + "'");
@@ -383,7 +436,8 @@ public class AnimationControllerInstance {
         stateEnteredMS = clock.timeMillis();
 
         for (AnimationController.StateAnimation stateAnimation : currentState.getAnimations()) {
-            final String identifier = entityAnimations.get(stateAnimation.shortName());
+            final String identifier = runtimeAnimations.getOrDefault(stateAnimation.shortName(),
+                    entityAnimations.get(stateAnimation.shortName()));
             if (identifier == null) {
                 LOGGER.debug("[AnimController] Animation short name '{}' not found in entity animations map",
                         stateAnimation.shortName());

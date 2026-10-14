@@ -14,6 +14,7 @@ import team.unnamed.mocha.runtime.Scope;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.ArrayDeque;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -38,6 +39,8 @@ public final class ClientEntityAnimationRuntime {
     private final ScaleExpressions scaleExpressions;
     private final Map<String, AnimationControllerInstance> controllers = new LinkedHashMap<>();
     private final Map<String, Animator> animators = new LinkedHashMap<>();
+    private final Map<String, AnimationControllerInstance> runtimeControllers = new LinkedHashMap<>();
+    private final ArrayDeque<AnimationCommand> pendingAnimations = new ArrayDeque<>();
 
     private List<ActivePlayback> activePlayback = List.of();
     private boolean initialized;
@@ -69,6 +72,28 @@ public final class ClientEntityAnimationRuntime {
         validateAnimationGraph();
     }
 
+    /** 先校验再排队；首次实体 tick 绑定时钟后才创建动画，避免从 tick 0 误计时。 */
+    public void playAnimation(String animation, String nextState, String stopExpression,
+                              String controller, float blendOutTime) {
+        Objects.requireNonNull(animation, "animation");
+        Objects.requireNonNull(nextState, "nextState");
+        Objects.requireNonNull(stopExpression, "stopExpression");
+        Objects.requireNonNull(controller, "controller");
+        final String identifier = packs.getAnimationDefinitions().getAnimations().containsKey(animation)
+                ? animation : animationAliases.get(animation);
+        if (identifier == null || !packs.getAnimationDefinitions().getAnimations().containsKey(identifier)) {
+            throw new IllegalArgumentException("Unknown animation '" + animation + "'");
+        }
+        if (!Float.isFinite(blendOutTime) || blendOutTime < 0.0F) {
+            throw new IllegalArgumentException("Invalid animation blend-out time");
+        }
+        if (!nextState.isEmpty() && !stopExpression.isEmpty()) {
+            compile("AnimateEntity.stopExpression", stopExpression);
+        }
+        pendingAnimations.add(new AnimationCommand(animation, nextState, stopExpression,
+                controller, blendOutTime));
+    }
+
     /** Returns false when this authoritative client tick was already processed. */
     public boolean tick(long tick, float partialTick, Scope scope, MoLangEvaluationContext context,
                         Consumer<Scope> bindHostInputs) {
@@ -85,6 +110,11 @@ public final class ClientEntityAnimationRuntime {
         }
         Objects.requireNonNull(bindHostInputs, "bindHostInputs").accept(scope);
         prepareFrame(scope, context);
+        while (!pendingAnimations.isEmpty()) {
+            final AnimationCommand command = pendingAnimations.remove();
+            commandController(command.controller()).playAnimation(command.animation(),
+                    command.nextState(), command.stopExpression(), command.blendOutTime(), scope, context);
+        }
 
         final List<ActivePlayback> next = new ArrayList<>();
         for (AnimateScript script : animateScripts) {
@@ -116,8 +146,39 @@ public final class ClientEntityAnimationRuntime {
             animator.advance();
             next.add(new ActivePlayback(script.shortName, PlaybackType.ANIMATION));
         }
+        for (AnimationControllerInstance controller : runtimeControllers.values()) {
+            controller.setBaseScope(scope);
+            controller.setEvaluationContext(context);
+            controller.tick(scope, context);
+        }
         activePlayback = List.copyOf(next);
         return true;
+    }
+
+    private AnimationControllerInstance commandController(String name) {
+        final String aliased = animationAliases.get(name);
+        final String controllerName = aliased != null && packs.getAnimationControllerDefinitions()
+                .getControllers().containsKey(aliased) ? aliased : name;
+        for (AnimateScript script : animateScripts) {
+            final String identifier = animationAliases.get(script.shortName());
+            final AnimationController definition = packs.getAnimationControllerDefinitions()
+                    .getControllers().get(identifier);
+            if (definition != null && controllerName.equals(identifier)) {
+                return controllers.computeIfAbsent(script.shortName(), ignored -> createController(definition));
+            }
+        }
+        return runtimeControllers.computeIfAbsent(controllerName, identifier -> {
+            final AnimationController definition = packs.getAnimationControllerDefinitions()
+                    .getControllers().get(identifier);
+            return createController(definition == null
+                    ? new AnimationController(identifier, "default",
+                    Map.of("default", AnimationControllerInstance.emptyState())) : definition);
+        });
+    }
+
+    private AnimationControllerInstance createController(AnimationController definition) {
+        return new AnimationControllerInstance(definition, animationAliases,
+                packs.getAnimationDefinitions(), packs.getAnimationControllerDefinitions(), listener, clock);
     }
 
     /** Repeated calls with the same tick and partial tick are pure and produce the same pose. */
@@ -141,6 +202,11 @@ public final class ClientEntityAnimationRuntime {
                 animator.setEvaluationContext(context);
                 animator.animate(model, false);
             }
+        }
+        for (AnimationControllerInstance controller : runtimeControllers.values()) {
+            controller.setBaseScope(scope);
+            controller.setEvaluationContext(context);
+            controller.animate(model, false);
         }
     }
 
@@ -181,7 +247,7 @@ public final class ClientEntityAnimationRuntime {
                 })
                 .toList();
         final List<AnimationControllerInstance.ControllerDebugSnapshot> controllerSnapshots =
-                controllers.values().stream()
+                java.util.stream.Stream.concat(controllers.values().stream(), runtimeControllers.values().stream())
                         .map(AnimationControllerInstance::debugSnapshot)
                         .toList();
         return new DebugSnapshot(lastTick, clock.partialTick(), preparedFrameTick,
@@ -317,6 +383,10 @@ public final class ClientEntityAnimationRuntime {
     }
 
     private record AnimateScript(String shortName, MoLangEngine.CompiledExpression condition) {
+    }
+
+    private record AnimationCommand(String animation, String nextState, String stopExpression,
+                                    String controller, float blendOutTime) {
     }
 
     private record ActivePlayback(String shortName, PlaybackType type) {

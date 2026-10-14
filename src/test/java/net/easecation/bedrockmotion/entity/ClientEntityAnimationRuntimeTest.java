@@ -250,6 +250,146 @@ class ClientEntityAnimationRuntimeTest {
     }
 
     @Test
+    void serverCommandsReplaceOnlyTheirControllerAndUseTheCurrentTick() throws Exception {
+        final Scope scope = scope();
+        final ClientEntityAnimationRuntime runtime = runtime(entity(List.of(), List.of(), List.of(),
+                Map.of("alias", "animation.test.override")), Map.of(), animationsPack());
+        final TestModel model = new TestModel("root");
+        runtime.playAnimation("animation.test.base", "", "", "", 0.0F);
+        assertPose(runtime, model, scope, 20_000L, 10.0F);
+        runtime.playAnimation("alias", "", "", "", 0.0F);
+        assertPose(runtime, model, scope, 20_001L, 60.0F);
+        runtime.playAnimation("animation.test.base", "", "", "separate", 0.0F);
+        assertPose(runtime, model, scope, 20_002L, 70.0F);
+        assertPose(runtime, model, scope, 21_000L, 70.0F);
+        assertEquals(2, runtime.debugSnapshot().controllers().size());
+        assertEquals("", runtime.debugSnapshot().controllers().getFirst().identifier());
+    }
+
+    @Test
+    void serverCommandsRestoreResourceStatesAndDoNotMutateOtherEntities() throws Exception {
+        final Content pack = animationsPack();
+        pack.putString("animation_controllers/command.json", """
+                {"animation_controllers":{"controller.test.host":{"states":{
+                  "default":{"animations":["base"]}}}}}
+                """);
+        final BedrockEntityData entity = entity(List.of(), List.of(),
+                List.of(new BedrockEntityData.Scripts.Animate("root", "")),
+                Map.of("root", "controller.test.host", "base", "animation.test.base"));
+        final PackManager packs = new PackManager(List.of(pack));
+        final Scope scope = scope();
+        final ClientEntityAnimationRuntime runtime = new ClientEntityAnimationRuntime(entity, Map.of(),
+                packs, new AnimationClock.Client(), listener(scope));
+        final ClientEntityAnimationRuntime other = new ClientEntityAnimationRuntime(entity, Map.of(),
+                packs, new AnimationClock.Client(), listener(scope));
+        final TestModel model = new TestModel("root");
+        runtime.playAnimation("animation.test.override", "default", "q.anim_time >= 0.1",
+                "controller.test.host", 0.1F);
+        assertPose(runtime, model, scope, 4_000L, 60.0F);
+        assertPose(other, model, scope, 4_000L, 10.0F);
+        assertPose(runtime, model, scope, 4_002L, 60.0F);
+        assertPose(runtime, model, scope, 4_003L, 35.0F);
+        assertPose(runtime, model, scope, 4_004L, 10.0F);
+        assertEquals("default", runtime.debugSnapshot().controllers().getFirst().stateName());
+        assertEquals(1, packs.getAnimationControllerDefinitions().getControllers()
+                .get("controller.test.host").getStates().size());
+        runtime.playAnimation("animation.test.override", "default", "q.anim_time >= 0.1",
+                "root", 0.0F);
+        assertPose(runtime, model, scope, 4_005L, 60.0F);
+        assertEquals(1, runtime.debugSnapshot().controllers().size());
+    }
+
+    @Test
+    void serverCommandsResolveInactiveControllerAliasesToTheSameResourceInstance() throws Exception {
+        final Content pack = animationsPack();
+        pack.putString("animation_controllers/inactive.json", """
+                {"animation_controllers":{"controller.test.inactive":{"states":{
+                  "default":{"animations":["base"]}}}}}
+                """);
+        final Scope scope = scope();
+        final ClientEntityAnimationRuntime runtime = runtime(
+                entity(List.of(), List.of(), List.of(),
+                        Map.of("controller_alias", "controller.test.inactive", "base", "animation.test.base")),
+                Map.of(), pack);
+        final TestModel model = new TestModel("root");
+        runtime.playAnimation("animation.test.override", "default", "q.anim_time >= 0.1",
+                "controller_alias", 0.0F);
+        assertPose(runtime, model, scope, 100L, 60.0F);
+        assertPose(runtime, model, scope, 102L, 10.0F);
+        runtime.playAnimation("animation.test.override", "", "", "controller.test.inactive", 0.0F);
+        assertPose(runtime, model, scope, 103L, 60.0F);
+        assertEquals(1, runtime.debugSnapshot().controllers().size());
+    }
+
+    @Test
+    void serverCommandsKeepHoldAndLoopUntilTheirTransitionAndSamplePurely() throws Exception {
+        final Content pack = animationsPack();
+        pack.putString("animations/lifecycle.json", """
+                {"animations":{
+                  "animation.test.hold":{"loop":"hold_on_last_frame","animation_length":0.1,
+                    "timeline":{"0.05":"v.event = 1"},
+                    "bones":{"root":{"rotation":[30,0,0]}}},
+                  "animation.test.loop":{"loop":true,"animation_length":0.1,
+                    "bones":{"root":{"rotation":[40,0,0]}}}
+                }}
+                """);
+        final Scope scope = scope();
+        final RecordingListener listener = new RecordingListener(scope);
+        final ClientEntityAnimationRuntime runtime = runtime(
+                entity(List.of(), List.of(), List.of(), Map.of()), Map.of(), pack,
+                new AnimationClock.Client(), listener);
+        final TestModel model = new TestModel("root");
+        runtime.playAnimation("animation.test.hold", "", "", "story", 0.0F);
+        assertPose(runtime, model, scope, 500L, 30.0F);
+        assertPose(runtime, model, scope, 502L, 30.0F);
+        assertPose(runtime, model, scope, 510L, 30.0F);
+        runtime.sample(model, 0.0F, scope, MoLangEvaluationContext.EMPTY);
+        runtime.sample(model, 0.0F, scope, MoLangEvaluationContext.EMPTY);
+        assertEquals(List.of("v.event = 1"), listener.timeline);
+        runtime.playAnimation("animation.test.loop", "", "", "story", 0.0F);
+        for (long tick = 511; tick <= 520; tick++) {
+            assertPose(runtime, model, scope, tick, 40.0F);
+        }
+        runtime.playAnimation("animation.test.hold", "finished", "q.all_animations_finished",
+                "story", 0.0F);
+        assertPose(runtime, model, scope, 521L, 30.0F);
+        assertPose(runtime, model, scope, 523L, 30.0F);
+        assertPose(runtime, model, scope, 524L, 0.0F);
+        assertEquals("finished", runtime.debugSnapshot().controllers().getFirst().stateName());
+    }
+
+    @Test
+    void serverCommandTransitionsRemainOrderedAndInvalidRequestsPreserveCurrentPlayback() throws Exception {
+        final Scope scope = scope();
+        final ClientEntityAnimationRuntime runtime = runtime(
+                entity(List.of(), List.of(), List.of(), Map.of()), Map.of(), animationsPack());
+        final TestModel model = new TestModel("root");
+        final MutableObjectBinding variables = (MutableObjectBinding) scope.get("variable");
+        variables.set("stop", Value.of(false));
+        runtime.playAnimation("animation.test.override", "first", "v.stop", "story", 0.0F);
+        assertPose(runtime, model, scope, 0L, 60.0F);
+        runtime.playAnimation("animation.test.override", "second", "v.stop", "story", 0.0F);
+        assertPose(runtime, model, scope, 1L, 60.0F);
+        assertThrows(IllegalArgumentException.class, () -> runtime.playAnimation(
+                "animation.test.missing", "", "", "story", 0.0F));
+        assertThrows(IllegalArgumentException.class, () -> runtime.playAnimation(
+                "animation.test.base", "default", "q.unknown(", "story", 0.0F));
+        assertThrows(IllegalArgumentException.class, () -> runtime.playAnimation(
+                "animation.test.base", "", "", "story", Float.NaN));
+        assertPose(runtime, model, scope, 2L, 60.0F);
+        variables.set("stop", Value.of(true));
+        assertPose(runtime, model, scope, 3L, 0.0F);
+        assertEquals("first", runtime.debugSnapshot().controllers().getFirst().stateName());
+    }
+
+    private static void assertPose(ClientEntityAnimationRuntime runtime, TestModel model, Scope scope,
+                                   long tick, float expectedRotation) throws Exception {
+        runtime.tick(tick, 0.0F, scope, MoLangEvaluationContext.EMPTY, ignored -> {});
+        runtime.sample(model, 0.0F, scope, MoLangEvaluationContext.EMPTY);
+        assertEquals(expectedRotation, model.bone("root").getRotation().x, 1.0e-4F);
+    }
+
+    @Test
     void preAnimationIsPreparedForEachDistinctRenderFrame() throws Exception {
         final Content pack = new Content();
         pack.putString("animations/frame.json", """
