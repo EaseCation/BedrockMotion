@@ -59,7 +59,6 @@ public class AnimationControllerInstance {
     private final LayeredScope reusableTransitionScope = new LayeredScope(Scope.create());
     private final OverlayBinding reusableTransitionOverlay = new OverlayBinding(null);
     private float lastIncomingFactor = 1.0F;
-    private int debugTickCounter;
     private long stateEnteredMS;
 
     public AnimationControllerInstance(
@@ -231,10 +230,6 @@ public class AnimationControllerInstance {
         }
 
         final Scope transitionScope = buildTransitionScope(frameScope);
-        if (debugTickCounter++ % 60 == 0 && LOGGER.isDebugEnabled()) {
-            LOGGER.debug("[AnimController] {} | state='{}' | entries={}",
-                    definition.getIdentifier(), currentStateName, stateEntries.size());
-        }
 
         final List<ParsedTransition> transitions = parsedTransitionsByState.get(currentStateName);
         if (transitions != null) {
@@ -242,8 +237,6 @@ public class AnimationControllerInstance {
                 try {
                     if (MoLangEngine.eval(transitionScope, context,
                             transition.parsedCondition()).getAsBoolean()) {
-                        LOGGER.debug("[AnimController] {} transition: {} -> {}",
-                                definition.getIdentifier(), currentStateName, transition.targetState());
                         enterState(transition.targetState(), transitionScope, context);
                         break;
                     }
