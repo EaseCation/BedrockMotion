@@ -20,7 +20,13 @@ import java.util.*;
  * Pure MoLang evaluation + BedrockRenderController data query, no MC dependencies.
  */
 public class RenderControllerEvaluator {
-    private static final Logger LOGGER = LoggerFactory.getLogger(RenderControllerEvaluator.class);
+    private static volatile Logger LOGGER = LoggerFactory.getLogger(RenderControllerEvaluator.class);
+
+    /** Allows the client to move diagnostics off its render thread without changing proxy logging. */
+    public static void setDiagnosticLogger(Logger logger) {
+        LOGGER = java.util.Objects.requireNonNull(logger);
+    }
+
 
     /**
      * Result of evaluating render controllers for an entity.

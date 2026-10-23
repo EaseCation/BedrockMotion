@@ -35,7 +35,13 @@ import java.util.Set;
 
 /** Runtime instance of a Bedrock animation controller state machine. */
 public class AnimationControllerInstance {
-    private static final Logger LOGGER = LoggerFactory.getLogger(AnimationControllerInstance.class);
+    private static volatile Logger LOGGER = LoggerFactory.getLogger(AnimationControllerInstance.class);
+
+    /** Allows the client to move diagnostics off its render thread without changing proxy logging. */
+    public static void setDiagnosticLogger(Logger logger) {
+        LOGGER = java.util.Objects.requireNonNull(logger);
+    }
+
 
     private final AnimationController definition;
     private final Map<String, String> entityAnimations;
