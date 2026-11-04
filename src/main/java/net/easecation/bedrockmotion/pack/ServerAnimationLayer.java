@@ -25,6 +25,15 @@ import java.util.Objects;
  * without converting the pack to another in-memory ZIP or exposing mutable parser-owned values.
  */
 public final class ServerAnimationLayer {
+    private static final List<String> SOURCE_DIRECTORIES = List.of("animations/", "animation_controllers/", "render_controllers/");
+
+    /** Exact source families used by this parser; opaque client documents are not motion definitions. */
+    public static List<String> sourcePaths(ContentView content) {
+        final List<String> paths = new ArrayList<>();
+        for (String directory : SOURCE_DIRECTORIES) paths.addAll(content.getFilesDeep(directory, ".json"));
+        return List.copyOf(paths);
+    }
+
 
     private static final Logger LOGGER = LoggerFactory.getLogger(ServerAnimationLayer.class);
     private static final Gson GSON = new GsonBuilder().create();
@@ -96,7 +105,7 @@ public final class ServerAnimationLayer {
                                               final boolean renderControllersAlreadyFrozen) {
         Objects.requireNonNull(content, "content");
         final Map<String, AnimationDefinitions.AnimationData> animations = new LinkedHashMap<>();
-        for (String path : content.getFilesDeep("animations/", ".json")) {
+        for (String path : content.getFilesDeep(SOURCE_DIRECTORIES.get(0), ".json")) {
             try {
                 for (Animation animation : Animation.parse(
                         GSON.fromJson(content.getString(path), com.google.gson.JsonObject.class))) {
@@ -109,7 +118,7 @@ public final class ServerAnimationLayer {
         }
 
         final Map<String, AnimationController> controllers = new LinkedHashMap<>();
-        for (String path : content.getFilesDeep("animation_controllers/", ".json")) {
+        for (String path : content.getFilesDeep(SOURCE_DIRECTORIES.get(1), ".json")) {
             try {
                 for (AnimationController controller : AnimationController.parse(
                         GSON.fromJson(content.getString(path), com.google.gson.JsonObject.class))) {
@@ -124,7 +133,7 @@ public final class ServerAnimationLayer {
         if (parsedRenderControllers != null) {
             renderControllers.putAll(parsedRenderControllers);
         } else {
-            for (String path : content.getFilesDeep("render_controllers/", ".json")) {
+            for (String path : content.getFilesDeep(SOURCE_DIRECTORIES.get(2), ".json")) {
                 try {
                     for (BedrockRenderController controller : BedrockControllerParser.parse(content.getString(path))) {
                         renderControllers.put(controller.identifier(), controller);
