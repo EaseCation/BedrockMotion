@@ -98,7 +98,7 @@ public class AnimateBuilder {
                 float timestamp = entry.getKey();
 
                 if (entry.getValue().getValue() instanceof SimpleTimeStamp simple) {
-                    frameList.add(new VBUKeyFrame(timestamp, simple.value(), Interpolations.CUBIC));
+                    frameList.add(new VBUKeyFrame(timestamp, simple.value(), Interpolations.LINEAR));
                 } else if (entry.getValue().getValue() instanceof ComplexTimeStamp complex) {
                     Interpolation interpolation;
                     switch (complex.lerpMode().toLowerCase(Locale.ROOT)) {
@@ -125,7 +125,7 @@ public class AnimateBuilder {
 
             builder.addBoneAnimation(name, new AnimateTransformation(target, frameList.toArray(new VBUKeyFrame[0])));
         } else {
-            builder.addBoneAnimation(name, new AnimateTransformation(target, new VBUKeyFrame[] {new VBUKeyFrame(0, get(object), Interpolations.CUBIC)}));
+            builder.addBoneAnimation(name, new AnimateTransformation(target, new VBUKeyFrame[] {new VBUKeyFrame(0, get(object), Interpolations.LINEAR)}));
         }
     }
 

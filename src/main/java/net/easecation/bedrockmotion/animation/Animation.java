@@ -23,15 +23,17 @@ public class Animation {
     private final String identifier;
     private ValueOrValue<?> loop;
     private String startDelay = "", loopDelay = "";
-    private String timePassExpression = ""; // anim_time_update TODO: Implement this.
+    private String timePassExpression = "";
     private boolean resetBeforePlay; // override_previous_animation
     private float animationLength = -1;
     private List<Cube> cubes = new ArrayList<>();
     private Map<Float, List<String>> timeline = new TreeMap<>();
     private Map<Float, List<ParticleKeyframe>> particleEffects = new TreeMap<>();
+    private Map<Float, List<SoundKeyframe>> soundEffects = new TreeMap<>();
     private boolean immutable;
 
     public record ParticleKeyframe(String effect, String locator, String preEffectExpression) {}
+    public record SoundKeyframe(String effect, String locator, String preEffectExpression) {}
 
     public static List<Animation> parse(final JsonObject object) {
         final JsonObject animationsList = object.getAsJsonObject("animations");
@@ -118,6 +120,32 @@ public class Animation {
                 }
             }
 
+            if (animationObject.has("sound_effects")) {
+                final JsonObject soundObj = animationObject.getAsJsonObject("sound_effects");
+                if (soundObj != null) {
+                    for (final String key : soundObj.keySet()) {
+                        if (!NumberUtils.isCreatable(key)) {
+                            continue;
+                        }
+                        final float timestamp = Float.parseFloat(key);
+                        final JsonElement element = soundObj.get(key);
+                        final List<SoundKeyframe> keyframes = new ArrayList<>();
+                        if (element.isJsonObject()) {
+                            keyframes.add(parseSoundKeyframe(element.getAsJsonObject()));
+                        } else if (element.isJsonArray()) {
+                            for (JsonElement item : element.getAsJsonArray()) {
+                                if (item.isJsonObject()) {
+                                    keyframes.add(parseSoundKeyframe(item.getAsJsonObject()));
+                                }
+                            }
+                        }
+                        if (!keyframes.isEmpty()) {
+                            animation.getSoundEffects().put(timestamp, keyframes);
+                        }
+                    }
+                }
+            }
+
             if (!animationObject.has("bones")) {
                 animations.add(animation);
                 continue;
@@ -137,6 +165,13 @@ public class Animation {
         return new ParticleKeyframe(effect, locator, preEffect);
     }
 
+    private static SoundKeyframe parseSoundKeyframe(JsonObject obj) {
+        final String effect = obj.has("effect") ? obj.get("effect").getAsString() : "";
+        final String locator = obj.has("locator") ? obj.get("locator").getAsString() : "";
+        final String preEffect = obj.has("pre_effect_script") ? obj.get("pre_effect_script").getAsString() : "";
+        return new SoundKeyframe(effect, locator, preEffect);
+    }
+
     /** Returns a detached immutable snapshot suitable for process-wide sharing. */
     public Animation immutableCopy() {
         if (this.immutable) return this;
@@ -154,6 +189,9 @@ public class Animation {
         final Map<Float, List<ParticleKeyframe>> particleEffects = new TreeMap<>();
         this.particleEffects.forEach((timestamp, effects) -> particleEffects.put(timestamp, List.copyOf(effects)));
         copy.particleEffects = Collections.unmodifiableMap(particleEffects);
+        final Map<Float, List<SoundKeyframe>> soundEffects = new TreeMap<>();
+        this.soundEffects.forEach((timestamp, effects) -> soundEffects.put(timestamp, List.copyOf(effects)));
+        copy.soundEffects = Collections.unmodifiableMap(soundEffects);
         copy.immutable = true;
         return copy;
     }

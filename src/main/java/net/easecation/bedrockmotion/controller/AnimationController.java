@@ -73,6 +73,7 @@ public class AnimationController {
         private final List<String> onEntry;
         private final List<String> onExit;
         private final List<ParticleEffect> particleEffects;
+        private final List<SoundEffect> soundEffects;
         private final BlendTransitionCurve blendTransitionCurve;
         private final boolean blendViaShortestPath;
 
@@ -80,11 +81,20 @@ public class AnimationController {
                      List<String> onEntry, List<String> onExit,
                      List<ParticleEffect> particleEffects,
                      BlendTransitionCurve blendTransitionCurve, boolean blendViaShortestPath) {
+            this(animations, transitions, onEntry, onExit, particleEffects, List.of(),
+                    blendTransitionCurve, blendViaShortestPath);
+        }
+
+        public State(List<StateAnimation> animations, List<Transition> transitions,
+                     List<String> onEntry, List<String> onExit,
+                     List<ParticleEffect> particleEffects, List<SoundEffect> soundEffects,
+                     BlendTransitionCurve blendTransitionCurve, boolean blendViaShortestPath) {
             this.animations = animations;
             this.transitions = transitions;
             this.onEntry = onEntry;
             this.onExit = onExit;
             this.particleEffects = particleEffects;
+            this.soundEffects = soundEffects;
             this.blendTransitionCurve = blendTransitionCurve;
             this.blendViaShortestPath = blendViaShortestPath;
         }
@@ -96,6 +106,7 @@ public class AnimationController {
                     List.copyOf(this.onEntry),
                     List.copyOf(this.onExit),
                     List.copyOf(this.particleEffects),
+                    List.copyOf(this.soundEffects),
                     this.blendTransitionCurve.immutableCopy(),
                     this.blendViaShortestPath);
         }
@@ -158,8 +169,23 @@ public class AnimationController {
                 }
             }
 
+            final List<SoundEffect> soundEffects = new ArrayList<>();
+            final JsonArray soundArray = obj.getAsJsonArray("sound_effects");
+            if (soundArray != null) {
+                for (JsonElement element : soundArray) {
+                    if (element.isJsonObject()) {
+                        final JsonObject sound = element.getAsJsonObject();
+                        final String effect = sound.has("effect") ? sound.get("effect").getAsString() : "";
+                        final String locator = sound.has("locator") ? sound.get("locator").getAsString() : "";
+                        final String preEffect = sound.has("pre_effect_script")
+                                ? sound.get("pre_effect_script").getAsString() : "";
+                        soundEffects.add(new SoundEffect(effect, locator, preEffect));
+                    }
+                }
+            }
+
             return new State(animations, transitions, onEntry, onExit,
-                    particleEffects, blendTransitionCurve, blendViaShortestPath);
+                    particleEffects, soundEffects, blendTransitionCurve, blendViaShortestPath);
         }
 
         private static List<String> parseStringArray(JsonArray array) {
@@ -181,4 +207,5 @@ public class AnimationController {
     public record Transition(String targetState, String condition) {}
 
     public record ParticleEffect(String effect, String locator, String preEffectExpression) {}
+    public record SoundEffect(String effect, String locator, String preEffectExpression) {}
 }

@@ -3,6 +3,7 @@ package net.easecation.bedrockmotion.controller;
 import net.easecation.bedrockmotion.model.AnimationEventListener;
 import net.easecation.bedrockmotion.mocha.MoLangEngine;
 import net.easecation.bedrockmotion.pack.definitions.AnimationDefinitions;
+import net.easecation.bedrockmotion.pack.definitions.AnimationControllerDefinitions;
 import org.junit.jupiter.api.Test;
 import team.unnamed.mocha.parser.ast.BinaryExpression;
 import team.unnamed.mocha.parser.ast.DoubleExpression;
@@ -97,12 +98,14 @@ class AnimationControllerIsolationTest {
         final AnimationController sharedDefinition = new AnimationController(
                 "controller.test", "default", Map.of("default", initial, "next", next));
         final AnimationDefinitions sharedAnimations = new AnimationDefinitions(Map.of());
+        final AnimationControllerDefinitions sharedControllers =
+                new AnimationControllerDefinitions(Map.of());
         final RecordingListener firstListener = new RecordingListener();
         final RecordingListener secondListener = new RecordingListener();
         final AnimationControllerInstance first = new AnimationControllerInstance(
-                sharedDefinition, Map.of(), sharedAnimations, firstListener);
+                sharedDefinition, Map.of(), sharedAnimations, sharedControllers, firstListener);
         final AnimationControllerInstance second = new AnimationControllerInstance(
-                sharedDefinition, Map.of(), sharedAnimations, secondListener);
+                sharedDefinition, Map.of(), sharedAnimations, sharedControllers, secondListener);
 
         final BinaryExpression detached = (BinaryExpression) MoLangEngine.parse("1 + 0").getFirst();
         detached.left(new DoubleExpression(0D));

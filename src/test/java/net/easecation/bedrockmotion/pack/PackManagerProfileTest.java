@@ -64,6 +64,22 @@ class PackManagerProfileTest {
     }
 
     @Test
+    void bundledVanillaContainsPlayerHostAnimationClosure() {
+        final PackManager packManager = new PackManager(List.of());
+
+        assertTrue(packManager.getAnimationControllerDefinitions().getControllers()
+                .containsKey("controller.animation.player.root"));
+        assertTrue(packManager.getAnimationControllerDefinitions().getControllers()
+                .containsKey("controller.animation.player.first_person_attack"));
+        assertTrue(packManager.getAnimationControllerDefinitions().getControllers()
+                .containsKey("controller.animation.humanoid.look_at_target"));
+        assertTrue(packManager.getAnimationControllerDefinitions().getControllers()
+                .containsKey("controller.animation.persona.blink"));
+        assertTrue(packManager.getAnimationDefinitions().getAnimations()
+                .containsKey("animation.player.first_person.base_pose"));
+    }
+
+    @Test
     void serverAnimationProfileBuildsOnlyRequiredDefinitionsAndDropsPacks() {
         final Content customPack = animationPack();
 
