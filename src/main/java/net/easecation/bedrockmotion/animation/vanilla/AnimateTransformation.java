@@ -26,17 +26,25 @@ public final class AnimateTransformation {
     private final Target target;
     private final VBUKeyFrame[] keyframes;
     private final boolean immutable;
+    private final boolean entityRelativeRotation;
 
     public AnimateTransformation(final Target target, final VBUKeyFrame[] keyframes) {
-        this(target, keyframes, false);
+        this(target, keyframes, false, false);
+    }
+
+    public AnimateTransformation(final Target target, final VBUKeyFrame[] keyframes, boolean entityRelativeRotation) {
+        this(target, keyframes, entityRelativeRotation, false);
     }
 
     private AnimateTransformation(final Target target, final VBUKeyFrame[] keyframes,
-                                  final boolean immutable) {
+                                  final boolean entityRelativeRotation, final boolean immutable) {
         this.target = target;
         this.keyframes = keyframes;
         this.immutable = immutable;
+        this.entityRelativeRotation = entityRelativeRotation;
     }
+
+    public boolean entityRelativeRotation() { return entityRelativeRotation; }
 
     public Target target() {
         return this.target;
@@ -56,7 +64,7 @@ public final class AnimateTransformation {
         for (int i = 0; i < copy.length; i++) {
             copy[i] = this.keyframes[i].immutableCopy();
         }
-        return new AnimateTransformation(this.target, copy, true);
+        return new AnimateTransformation(this.target, copy, this.entityRelativeRotation, true);
     }
 
     /**

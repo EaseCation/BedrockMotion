@@ -62,14 +62,18 @@ public class AnimateBuilder {
 
         final VBUAnimation.Builder builder = VBUAnimation.Builder.create(length);
         for (Cube cube : animation.getCubes()) {
+            final String space = cube.getRelativeTo();
+            if (!space.isEmpty() && !space.equals("entity") && !space.equals("parent")) {
+                throw new IllegalArgumentException("Unsupported rotation space on " + cube.getIdentifier() + ": " + space);
+            }
             if (cube.getPosition() != null) {
-                build(builder, cube.getIdentifier(), OFFSET, cube.getPosition().getValue());
+                build(builder, cube.getIdentifier(), OFFSET, cube.getPosition().getValue(), false);
             }
             if (cube.getRotation() != null) {
-                build(builder, cube.getIdentifier(), ROTATE, cube.getRotation().getValue());
+                build(builder, cube.getIdentifier(), ROTATE, cube.getRotation().getValue(), space.equals("entity"));
             }
             if (cube.getScale() != null) {
-                build(builder, cube.getIdentifier(), SCALE, cube.getScale().getValue());
+                build(builder, cube.getIdentifier(), SCALE, cube.getScale().getValue(), false);
             }
         }
 
@@ -81,7 +85,8 @@ public class AnimateBuilder {
     }
 
     @SuppressWarnings("unchecked")
-    private static void build(final VBUAnimation.Builder builder, String name, final Target target, final Object object) {
+    private static void build(final VBUAnimation.Builder builder, String name, final Target target, final Object object,
+                              boolean entityRelativeRotation) {
         // Normalize the bone name to lowercase at build time. Bedrock bone names are case-insensitive,
         // and AnimationHelper.animate looks them up via IBoneModel.getBoneIndex() (contract: lowercase
         // keys) — so this avoids a per-bone-per-frame toLowerCase at query time.
@@ -123,10 +128,38 @@ public class AnimateBuilder {
                 return;
             }
 
-            builder.addBoneAnimation(name, new AnimateTransformation(target, frameList.toArray(new VBUKeyFrame[0])));
+            addTransformation(builder, name, target, frameList.toArray(new VBUKeyFrame[0]), entityRelativeRotation);
         } else {
-            builder.addBoneAnimation(name, new AnimateTransformation(target, new VBUKeyFrame[] {new VBUKeyFrame(0, get(object), Interpolations.LINEAR)}));
+            addTransformation(builder, name, target,
+                    new VBUKeyFrame[] {new VBUKeyFrame(0, get(object), Interpolations.LINEAR)}, entityRelativeRotation);
         }
+    }
+
+    private static void addTransformation(VBUAnimation.Builder builder, String name, Target target,
+                                           VBUKeyFrame[] frames, boolean entityRelativeRotation) {
+        // Bedrock removes an identically-zero constant rotation channel, including constant curves.
+        // An actor expression returning zero still owns rotation space. Do not test sampled values.
+        boolean ownsRotationSpace = entityRelativeRotation && !isConstantZero(frames);
+        builder.addBoneAnimation(name, new AnimateTransformation(target, frames, ownsRotationSpace));
+    }
+
+    private static boolean isConstantZero(VBUKeyFrame[] frames) {
+        for (VBUKeyFrame frame : frames) {
+            if (!isConstantZero(frame.preInternal()) || !isConstantZero(frame.postInternal())) return false;
+        }
+        return true;
+    }
+
+    private static boolean isConstantZero(ResolvedComponent[] components) {
+        for (ResolvedComponent component : components) {
+            if (component.constant()) {
+                if (component.value() != 0) return false;
+            } else {
+                var constant = component.exprInternal().constantNumber();
+                if (constant.isEmpty() || constant.getAsDouble() != 0) return false;
+            }
+        }
+        return true;
     }
 
     private static String[] get(final Object object) {

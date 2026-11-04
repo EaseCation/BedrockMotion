@@ -358,6 +358,11 @@ public class AnimationControllerInstance {
             if (initial == null || outgoingTransform == null) {
                 continue;
             }
+            // Native shortest-path crossfade writes numeric channels, not the sampled endpoints'
+            // rotation-space metadata. Keep the lower-layer basis for the duration of the fade,
+            // including overriding endpoints. Once the fade ends, normal sampling applies the
+            // target's space again. Restoring this also preserves unrelated lower-layer bones.
+            bone.setEntityRelativeRotation(initial.entityRelativeRotation());
 
             final Vector3f rotation = bone.getRotation();
             final Vector3f offset = bone.getOffset();

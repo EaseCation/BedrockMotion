@@ -28,7 +28,10 @@ public final class VBUKeyFrame {
         this.timestamp = timestamp;
         this.preTarget = preTarget;
         this.postTarget = postTarget;
-        this.hasSeparatePrePost = hasSeparatePrePost;
+        // An explicit but equal constant pre/post pair is continuous. Treating its JSON
+        // spelling as a jump clamps Catmull neighbours and changes native author curves.
+        // Do not compare sampled values: expressions may vary by actor or have side effects.
+        this.hasSeparatePrePost = hasSeparatePrePost && !sameConstants(pre, post);
         this.interpolation = interpolation;
         this.pre = pre;
         this.post = post;
@@ -40,6 +43,18 @@ public final class VBUKeyFrame {
                        final AnimateTransformation.Interpolation interpolation) {
         this(timestamp, preTarget, postTarget, hasSeparatePrePost, interpolation,
                 AnimateTransformation.resolve(preTarget), AnimateTransformation.resolve(postTarget));
+    }
+
+    private static boolean sameConstants(ResolvedComponent[] pre, ResolvedComponent[] post) {
+        if (pre == null || post == null || pre.length != post.length) return false;
+        for (int i = 0; i < pre.length; i++) {
+            var before = pre[i].constant() ? java.util.OptionalDouble.of(pre[i].value())
+                    : pre[i].exprInternal().constantNumber();
+            var after = post[i].constant() ? java.util.OptionalDouble.of(post[i].value())
+                    : post[i].exprInternal().constantNumber();
+            if (before.isEmpty() || after.isEmpty() || before.getAsDouble() != after.getAsDouble()) return false;
+        }
+        return true;
     }
 
     public VBUKeyFrame(final float timestamp, final String[] value,

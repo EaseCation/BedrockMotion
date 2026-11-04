@@ -20,7 +20,14 @@ public class AnimationHelper {
     public static void animate(Scope scope, MoLangEvaluationContext context,
                                IBoneModel model, VBUAnimation animation, long runningTime, float scale,
                                Vector3f tempVec, Map<String, IBoneTarget> boneIndex) {
-        float g = AnimationHelper.getRunningSeconds(animation, runningTime);
+        animateAtSeconds(scope, context, model, animation, runningTime / 1000.0F, scale, tempVec, boneIndex);
+    }
+
+    /** Preserve fractional author time supplied by anim_time_update. */
+    public static void animateAtSeconds(Scope scope, MoLangEvaluationContext context,
+                                        IBoneModel model, VBUAnimation animation, float seconds, float scale,
+                                        Vector3f tempVec, Map<String, IBoneTarget> boneIndex) {
+        float g = runningSeconds(animation, seconds);
         Map<String, IBoneTarget> index = boneIndex != null ? boneIndex : model.getBoneIndex();
 
         for (Map.Entry<String, List<AnimateTransformation>> entry : animation.boneAnimations().entrySet()) {
@@ -36,9 +43,12 @@ public class AnimationHelper {
                 if (lvs.length == 0) {
                     continue;
                 }
+                if (scale > 0 && transformation.entityRelativeRotation()) bone.setEntityRelativeRotation(true);
                 final Vector3f current = transformation.target() == AnimateTransformation.Targets.ROTATE
                         ? bone.getRotation()
-                        : transformation.target() == AnimateTransformation.Targets.OFFSET ? bone.getOffset() : null;
+                        : transformation.target() == AnimateTransformation.Targets.OFFSET ? bone.readAnimationOffset(tempVec)
+                        : transformation.target() == AnimateTransformation.Targets.SCALE
+                            ? tempVec.set(bone.getScaleX(), bone.getScaleY(), bone.getScaleZ()) : null;
                 // 首帧前取 pre，关键帧时刻及末帧后取 post；禁止在跳变点混入另一侧。
                 if (g < lvs[0].timestamp() || g >= lvs[lvs.length - 1].timestamp()) {
                     final boolean beforeFirst = g < lvs[0].timestamp();
@@ -84,8 +94,7 @@ public class AnimationHelper {
         }
     }
 
-    private static float getRunningSeconds(VBUAnimation animation, long runningTime) {
-        float f = (float)runningTime / 1000.0f;
+    public static float runningSeconds(VBUAnimation animation, float f) {
         if (!animation.looping() || animation.lengthInSeconds() <= 0) {
             return f;
         }

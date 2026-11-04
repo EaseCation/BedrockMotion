@@ -9,15 +9,18 @@ import org.joml.Vector3f;
 public record BoneTransform(
         float rx, float ry, float rz,
         float ox, float oy, float oz,
-        float sx, float sy, float sz
+        float sx, float sy, float sz, boolean entityRelativeRotation
 ) {
+    public BoneTransform(float rx, float ry, float rz, float ox, float oy, float oz, float sx, float sy, float sz) {
+        this(rx, ry, rz, ox, oy, oz, sx, sy, sz, false);
+    }
     public static BoneTransform capture(IBoneTarget bone) {
         final Vector3f rot = bone.getRotation();
         final Vector3f off = bone.getOffset();
         return new BoneTransform(
                 rot.x, rot.y, rot.z,
                 off.x, off.y, off.z,
-                bone.getScaleX(), bone.getScaleY(), bone.getScaleZ()
+                bone.getScaleX(), bone.getScaleY(), bone.getScaleZ(), bone.isEntityRelativeRotation()
         );
     }
 
@@ -25,5 +28,6 @@ public record BoneTransform(
         bone.getRotation().set(rx, ry, rz);
         bone.getOffset().set(ox, oy, oz);
         bone.setScale(sx, sy, sz);
+        bone.setEntityRelativeRotation(entityRelativeRotation);
     }
 }

@@ -53,11 +53,15 @@ class AttachableAnimationRuntimeTest {
 
         assertTrue(runtime.tick(20L, scope, MoLangEvaluationContext.EMPTY));
         assertFalse(runtime.tick(20L, scope, MoLangEvaluationContext.EMPTY));
+        assertEquals(0.0D, variables.get("pre_count").getAsNumber());
+        runtime.prepareFrame(1L, "third_person", 20L, 0, scope, MoLangEvaluationContext.EMPTY);
+        runtime.prepareFrame(1L, "third_person", 20L, 0, scope, MoLangEvaluationContext.EMPTY);
         assertEquals(1.0D, variables.get("initialized").getAsNumber());
         assertEquals(1.0D, variables.get("pre_count").getAsNumber());
         assertEquals(new AttachableAnimationRuntime.Scale(2.0F, 1.0F, 2.0F), runtime.rootScale());
 
         assertTrue(runtime.tick(21L, scope, MoLangEvaluationContext.EMPTY));
+        runtime.prepareFrame(2L, "third_person", 21L, 0, scope, MoLangEvaluationContext.EMPTY);
         assertEquals(1.0D, variables.get("initialized").getAsNumber());
         assertEquals(2.0D, variables.get("pre_count").getAsNumber());
     }
