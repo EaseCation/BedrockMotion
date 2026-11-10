@@ -75,8 +75,15 @@ public final class AttachableAnimationRuntime {
     private PreparedView preparedView;
     private long preparedTick = Long.MIN_VALUE;
     private long poseSamples, poseReuses, poseCopies;
-    /** An explicitly owned external pose replaces this object's authored pose stack, not its materials. */
-    @FunctionalInterface public interface PoseOverride { void apply(IBoneModel model); }
+    /** An explicitly owned external pose replaces this object's authored pose stack, not its materials.
+     * Retained animations (attachable animation identifiers, e.g. an always-on part loop) keep their
+     * own clocks and are layered after the owned pose; their animate conditions and pre-animation are
+     * not evaluated while the override is active.
+     */
+    @FunctionalInterface public interface PoseOverride {
+        void apply(IBoneModel model);
+        default java.util.Set<String> retainedAnimations() { return java.util.Set.of(); }
+    }
     private PoseOverride poseOverride;
     public void setPoseOverride(PoseOverride replacement) {
         if (poseOverride == replacement) return;
@@ -119,7 +126,9 @@ public final class AttachableAnimationRuntime {
         // Display conditions may have side effects or read view-derived variables. Once a
         // displayed plan exists, ticks advance that plan instead of selecting it a second time.
         // Tick-only callers can still establish a plan before their first displayed preparation.
-        if (lastFrame == Long.MIN_VALUE && poseOverride == null) selectPlayback(scope, context);
+        if (lastFrame == Long.MIN_VALUE) {
+            if (poseOverride == null) selectPlayback(scope, context); else selectRetained();
+        }
         advanceSelected(tick, scope, context);
         return true;
     }
@@ -135,6 +144,24 @@ public final class AttachableAnimationRuntime {
             if (!entry.getValue()) continue;
             final String identifier = definition.getAnimations().get(entry.getKey());
             if (identifier == null) continue;
+            Playback existing = playback.get(identifier);
+            if (existing == null) {
+                existing = createPlayback(identifier);
+                if (existing == null) continue;
+                playback.put(identifier, existing);
+            }
+            next.add(existing);
+        }
+        if (!next.equals(activePlayback)) activePlayback = List.copyOf(next);
+    }
+
+    /** Under a pose override only the explicitly retained authored animations play, unconditionally. */
+    private void selectRetained() {
+        final java.util.Set<String> retained = poseOverride.retainedAnimations();
+        if (retained.isEmpty()) { activePlayback = List.of(); return; }
+        final java.util.ArrayList<Playback> next = new java.util.ArrayList<>();
+        for (String identifier : definition.getAnimations().values()) {
+            if (!retained.contains(identifier) || next.stream().anyMatch(entry -> entry.identifier.equals(identifier))) continue;
             Playback existing = playback.get(identifier);
             if (existing == null) {
                 existing = createPlayback(identifier);
@@ -218,10 +245,8 @@ public final class AttachableAnimationRuntime {
             initialize(scope, context);
             if (poseOverride == null) evaluateAll(program.preAnimation(), scope, context);
             rootScale = evaluateScale(scope, context);
-            if (poseOverride == null) {
-                selectPlayback(scope, context);
-                advanceSelected(tick, scope, context);
-            } else activePlayback = List.of();
+            if (poseOverride == null) selectPlayback(scope, context); else selectRetained();
+            advanceSelected(tick, scope, context);
             next.scale = rootScale; next.playback = activePlayback; next.ready = true;
             preparedFrames++;
         } catch (RuntimeException failure) {
@@ -307,7 +332,7 @@ public final class AttachableAnimationRuntime {
         poseSamples++;
         model.resetAllBones();
         if (bindHostPose != null) bindHostPose.run();
-        if (poseOverride != null) { poseOverride.apply(model); return; }
+        if (poseOverride != null) poseOverride.apply(model);
         // scripts.animate is one ordered stack. Grouping controllers ahead of bare animations
         // changes `this`, override and scale composition even if both groups preserve local order.
         for (Playback entry : activePlayback) {
