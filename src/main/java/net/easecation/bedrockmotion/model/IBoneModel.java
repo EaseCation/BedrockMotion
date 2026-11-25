@@ -25,4 +25,14 @@ public interface IBoneModel {
      * Called before additive animation blending each frame.
      */
     void resetAllBones();
+
+    /** Snapshot for this exact model instance. Hosts with additional pose channels must override.
+     * Called only when another display context is about to overwrite a same-frame sampled model.
+     */
+    default Runnable capturePose() {
+        var bones = new java.util.ArrayList<IBoneTarget>();
+        var poses = new java.util.ArrayList<BoneTransform>();
+        for (IBoneTarget bone : getAllBones()) { bones.add(bone); poses.add(BoneTransform.capture(bone)); }
+        return () -> { for (int i = 0; i < bones.size(); i++) poses.get(i).restore(bones.get(i)); };
+    }
 }

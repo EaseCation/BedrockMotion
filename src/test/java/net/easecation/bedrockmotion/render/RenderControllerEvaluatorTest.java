@@ -44,7 +44,7 @@ class RenderControllerEvaluatorTest {
         assertEquals(List.of(
                 "textures/entity/gun_dwp_grace_blue",
                 "textures/misc/enchanted_item_glint"), passes.getFirst().textureValues());
-        assertEquals("blend", passes.getFirst().perBoneMaterial().get("*"));
+        assertEquals("entity_alphablend", passes.getFirst().perBoneMaterial().get("*"));
         assertEquals(RenderControllerEvaluator.BlendMode.ALPHA_BLEND, passes.getFirst().blendMode());
         assertFalse(scope.entries().containsKey("geometry"));
         assertFalse(scope.entries().containsKey("texture"));
@@ -108,7 +108,7 @@ class RenderControllerEvaluatorTest {
         assertEquals(1, passes.size());
         assertEquals("geometry.gun_dwp_grace_blue", passes.getFirst().geometryValue());
         assertEquals("textures/entity/gun_dwp_grace_blue", passes.getFirst().textureValue());
-        assertEquals("blend", passes.getFirst().perBoneMaterial().get("*"));
+        assertEquals("entity_alphablend", passes.getFirst().perBoneMaterial().get("*"));
     }
 
     @Test

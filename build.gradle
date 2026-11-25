@@ -7,7 +7,7 @@ plugins {
 // (artifactId = project name), see GeyserWorkspace docs/maven-coordinates.md. Was com.github.EaseCation:BedrockMotion.
 group = 'net.easecation'
 base.archivesName = 'BedrockMotion'
-version = '1.1.0'
+version = '1.2.0'
 
 repositories {
     // EaseCation private repository (Aliyun Yunxiao Packages), only for net.easecation.* coordinates.
@@ -33,11 +33,12 @@ java {
 }
 
 dependencies {
-    api 'net.easecation.fork.unnamed:mocha:3.0.1-ec.1' // EaseCation Mocha fork
-    // 不再 transitive=false:需要让 CubeConverter 的 compileOnlyApi(ViaProxy 侧 relocated gson)
-    // 透传到本工程 compile classpath,以解析其解析器重载签名。CubeConverter 仅 compileOnlyApi 会传递
-    // (其余为 implementation,不外泄;plain 分支无 api 依赖),不影响运行期与 NeoForge。
-    api('net.easecation.fork.oryxel.cube:cubeconverter:1.3-ec.1') // EaseCation CubeConverter fork
+    api 'net.easecation.fork.unnamed:mocha:3.0.1-ec.2' // EaseCation Mocha fork
+    // CubeConverter comes in two flavors with the same classes: cubeconverter-gson (plain Gson, NeoForge) and
+    // cubeconverter (ViaVersion-relocated Gson, ViaProxy). Since 1.2.0 this library is built and published
+    // against the plain-Gson flavor, which carries the render-controller uv_anim API it uses; ViaProxy-side
+    // consumers exclude it and depend on the relocated flavor instead.
+    api('net.easecation.fork.oryxel.cube:cubeconverter-gson:1.3-ec.2') // EaseCation CubeConverter fork
     api 'org.joml:joml:1.10.8'
     implementation 'com.google.code.gson:gson:2.13.2'
     implementation 'org.apache.commons:commons-lang3:3.17.0'

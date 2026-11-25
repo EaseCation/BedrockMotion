@@ -28,6 +28,69 @@ public class RenderControllerEvaluator {
     }
 
 
+    /** Installation-owned ASTs. Values and scopes remain per evaluation; a pack reload creates a
+     * new program. This never relies on the size or eviction policy of the global parse cache.
+     * Parse failures are retained and raised only when their branch is actually evaluated.
+     */
+    public static final class Prepared {
+        private final BedrockEntityData entity;
+        private final RenderControllerDefinitions definitions;
+        private final Map<String, Source> expressions;
+
+        private Prepared(BedrockEntityData entity, RenderControllerDefinitions definitions) {
+            this.entity = Objects.requireNonNull(entity);
+            this.definitions = Objects.requireNonNull(definitions);
+            final Set<String> sources = new LinkedHashSet<>();
+            for (var reference : entity.getControllers()) {
+                sources.add(reference.condition());
+                var controller = definitions.getRenderControllers().get(reference.identifier());
+                if (controller == null) continue;
+                sources.add(controller.geometryExpression());
+                sources.addAll(controller.textureExpressions());
+                sources.addAll(controller.materialsMap().values());
+                sources.addAll(controller.partVisibility().values());
+                for (String color : controller.colorExpressions().values()) {
+                    if (color != null && !color.isBlank()) sources.add(normalizeColor(color));
+                }
+                for (var arrays : List.of(controller.geometries(), controller.textures(), controller.materials())) {
+                    for (var array : arrays) sources.addAll(array.values());
+                }
+            }
+            final Map<String, Source> compiled = new HashMap<>();
+            for (String source : sources) if (source != null) compiled.put(source, new Source(source));
+            expressions = Map.copyOf(compiled);
+        }
+    }
+
+    private static final class Source {
+        final MoLangEngine.CompiledExpression expression;
+        final Exception failure;
+        Source(String source) {
+            MoLangEngine.CompiledExpression compiled = null;
+            Exception error = null;
+            try { compiled = MoLangEngine.compileForEvaluation(source); }
+            catch (IOException | RuntimeException exception) { error = exception; }
+            expression = compiled; failure = error;
+        }
+        Value eval(Scope scope, MoLangEvaluationContext context) throws IOException {
+            if (failure instanceof IOException io) throw io;
+            if (failure instanceof RuntimeException runtime) throw runtime;
+            return MoLangEngine.eval(scope, context, expression);
+        }
+    }
+
+    public static Prepared prepare(BedrockEntityData entity, RenderControllerDefinitions definitions) {
+        return new Prepared(entity, definitions);
+    }
+
+    private static Value evaluateExpression(Prepared prepared, Scope scope,
+                                            MoLangEvaluationContext context, String source) throws IOException {
+        if (prepared == null || source == null) return MoLangEngine.eval(scope, context, source);
+        Source expression = prepared.expressions.get(source);
+        if (expression == null) throw new IllegalStateException("Render source changed without preparing a new program");
+        return expression.eval(scope, context);
+    }
+
     /**
      * Result of evaluating render controllers for an entity.
      *
@@ -46,6 +109,9 @@ public class RenderControllerEvaluator {
 
     /**
      * Complete, backend-neutral description of one render-controller pass.
+     * {@code perBoneMaterial} maps ordered bone selectors to resolved material identifiers,
+     * not entity-local aliases. Aliases only belong to the input expression scope; converting
+     * back would make native material semantics depend on arbitrary author naming.
      *
      * <p>Known limitation: {@code textureValues} retains every texture slot, but the current
      * consumer (VBU) only renders the first slot, and the {@code enchanted} material degrades to
@@ -111,9 +177,22 @@ public class RenderControllerEvaluator {
         // EvaluatedModel predates texture-slot-aware passes and represented every texture slot as a
         // separate model. Keep that behavior for existing entity consumers while new render backends
         // consume one EvaluatedRenderPass per controller with all slots intact.
+        return models(evaluatePasses(entityData, scope, MoLangEvaluationContext.EMPTY,
+                rcDefs, inverseGeometryMap, inverseTextureMap), inverseGeometryMap, inverseTextureMap);
+    }
+
+    public static List<EvaluatedModel> evaluate(Prepared prepared, Scope scope,
+                                               Map<String, String> inverseGeometryMap,
+                                               Map<String, String> inverseTextureMap) {
+        return models(evaluatePasses(prepared, scope, MoLangEvaluationContext.EMPTY,
+                inverseGeometryMap, inverseTextureMap), inverseGeometryMap, inverseTextureMap);
+    }
+
+    private static List<EvaluatedModel> models(List<EvaluatedRenderPass> passes,
+                                               Map<String, String> inverseGeometryMap,
+                                               Map<String, String> inverseTextureMap) {
         final List<EvaluatedModel> models = new ArrayList<>();
-        for (EvaluatedRenderPass pass : evaluatePasses(entityData, scope, MoLangEvaluationContext.EMPTY,
-                rcDefs, inverseGeometryMap, inverseTextureMap)) {
+        for (EvaluatedRenderPass pass : passes) {
             final String geometryName = inverseGeometryMap.get(pass.geometryValue());
             for (String textureValue : pass.textureValues()) {
                 final String textureName = inverseTextureMap.get(textureValue);
@@ -134,8 +213,20 @@ public class RenderControllerEvaluator {
             Map<String, String> inverseGeometryMap,
             Map<String, String> inverseTextureMap) {
 
+        return evaluatePasses(null, entityData, scope, context, rcDefs, inverseGeometryMap, inverseTextureMap);
+    }
+
+    public static List<EvaluatedRenderPass> evaluatePasses(Prepared prepared, Scope scope,
+            MoLangEvaluationContext context, Map<String, String> inverseGeometryMap,
+            Map<String, String> inverseTextureMap) {
+        return evaluatePasses(prepared, prepared.entity, scope, context, prepared.definitions,
+                inverseGeometryMap, inverseTextureMap);
+    }
+
+    private static List<EvaluatedRenderPass> evaluatePasses(Prepared prepared, BedrockEntityData entityData,
+            Scope scope, MoLangEvaluationContext context, RenderControllerDefinitions rcDefs,
+            Map<String, String> inverseGeometryMap, Map<String, String> inverseTextureMap) {
         final List<EvaluatedRenderPass> passes = new ArrayList<>();
-        final Map<String, String> inverseMaterialMap = inverse(entityData.getMaterials());
         final Scope resourceScope = withResourceBindings(scope, entityData);
 
         for (final BedrockEntityData.RenderController entityRenderController : entityData.getControllers()) {
@@ -148,7 +239,7 @@ public class RenderControllerEvaluator {
             // Evaluate render controller condition
             if (!entityRenderController.condition().isBlank()) {
                 try {
-                    final Value conditionResult = MoLangEngine.eval(scope, context, entityRenderController.condition());
+                    final Value conditionResult = evaluateExpression(prepared, scope, context, entityRenderController.condition());
                     if (!conditionResult.getAsBoolean()) {
                         continue;
                     }
@@ -160,22 +251,22 @@ public class RenderControllerEvaluator {
 
             try {
                 final Scope geometryScope = resourceScope.copy();
-                geometryScope.set("array", getArrayBinding(resourceScope, context, renderController.geometries()));
+                geometryScope.set("array", getArrayBinding(prepared, resourceScope, context, renderController.geometries()));
                 final Scope textureScope = resourceScope.copy();
-                textureScope.set("array", getArrayBinding(resourceScope, context, renderController.textures()));
+                textureScope.set("array", getArrayBinding(prepared, resourceScope, context, renderController.textures()));
                 final Scope materialScope = resourceScope.copy();
-                materialScope.set("array", getArrayBinding(resourceScope, context, renderController.materials()));
+                materialScope.set("array", getArrayBinding(prepared, resourceScope, context, renderController.materials()));
 
-                final String geometryValue = MoLangEngine.eval(geometryScope, context, renderController.geometryExpression()).getAsString();
+                final String geometryValue = evaluateExpression(prepared, geometryScope, context, renderController.geometryExpression()).getAsString();
                 final String geometryName = inverseGeometryMap.get(geometryValue);
 
                 final LinkedHashMap<String, String> materials = new LinkedHashMap<>();
                 final List<String> materialValues = new ArrayList<>();
                 for (Map.Entry<String, String> material : renderController.materialsMap().entrySet()) {
                     try {
-                        final String value = MoLangEngine.eval(materialScope, context, material.getValue()).getAsString();
+                        final String value = evaluateExpression(prepared, materialScope, context, material.getValue()).getAsString();
                         materialValues.add(value);
-                        materials.put(material.getKey(), inverseMaterialMap.getOrDefault(value, value));
+                        materials.put(material.getKey(), value);
                     } catch (Throwable e) {
                         // Tolerate a single broken material expression: keep the raw name and continue.
                         LOGGER.warn("Failed to evaluate render controller material '{}'", material.getValue(), e);
@@ -186,7 +277,7 @@ public class RenderControllerEvaluator {
                 final LinkedHashMap<String, Boolean> visibility = new LinkedHashMap<>();
                 for (Map.Entry<String, String> part : renderController.partVisibility().entrySet()) {
                     try {
-                        visibility.put(part.getKey(), MoLangEngine.eval(scope, context, part.getValue()).getAsBoolean());
+                        visibility.put(part.getKey(), evaluateExpression(prepared, scope, context, part.getValue()).getAsBoolean());
                     } catch (Throwable e) {
                         // Tolerate a single broken visibility expression: default the part to visible.
                         LOGGER.warn("Failed to evaluate render controller part_visibility '{}'", part.getValue(), e);
@@ -199,12 +290,12 @@ public class RenderControllerEvaluator {
                 // Material.default becomes the literal string "default" and loses the
                 // entity_alphatest -> entity_nocull inheritance.
                 final MaterialState materialState = MaterialState.from(materialValues);
-                final int colorArgb = evaluateColor(scope, context, renderController.colorExpressions());
+                final int colorArgb = evaluateColor(prepared, scope, context, renderController.colorExpressions());
 
                 final List<String> textureValues = new ArrayList<>();
                 for (String textureExpression : renderController.textureExpressions()) {
                     try {
-                        textureValues.add(MoLangEngine.eval(
+                        textureValues.add(evaluateExpression(prepared,
                                 textureScope, context, textureExpression).getAsString());
                     } catch (Throwable e) {
                         LOGGER.warn("Failed to evaluate render controller texture '{}'",
@@ -254,14 +345,14 @@ public class RenderControllerEvaluator {
     }
 
     private static MutableObjectBinding getArrayBinding(
-            Scope scope, MoLangEvaluationContext context,
+            Prepared prepared, Scope scope, MoLangEvaluationContext context,
             List<BedrockRenderController.Array> arrays) throws IOException {
         final MutableObjectBinding arrayBinding = new MutableObjectBinding();
         for (BedrockRenderController.Array array : arrays) {
             if (array.name().toLowerCase(Locale.ROOT).startsWith("array.")) {
                 final String[] resolvedExpressions = new String[array.values().size()];
                 for (int i = 0; i < array.values().size(); i++) {
-                    resolvedExpressions[i] = MoLangEngine.eval(scope, context, array.values().get(i)).getAsString();
+                    resolvedExpressions[i] = evaluateExpression(prepared, scope, context, array.values().get(i)).getAsString();
                 }
                 arrayBinding.set(array.name().substring(6), Value.of(resolvedExpressions));
             }
@@ -270,40 +361,39 @@ public class RenderControllerEvaluator {
         return arrayBinding;
     }
 
-    private static Map<String, String> inverse(Map<String, String> values) {
-        final HashMap<String, String> inverse = new HashMap<>();
-        values.forEach((key, value) -> inverse.put(value, key));
-        return inverse;
-    }
-
-    private static int evaluateColor(Scope scope, MoLangEvaluationContext context,
+    private static int evaluateColor(Prepared prepared, Scope scope, MoLangEvaluationContext context,
                                      Map<String, String> expressions) {
-        final float r = colorComponent(scope, context, expressions.get("r"), 1.0F);
-        final float g = colorComponent(scope, context, expressions.get("g"), 1.0F);
-        final float b = colorComponent(scope, context, expressions.get("b"), 1.0F);
-        final float a = colorComponent(scope, context, expressions.get("a"), 1.0F);
+        final float r = colorComponent(prepared, scope, context, expressions.get("r"), 1.0F);
+        final float g = colorComponent(prepared, scope, context, expressions.get("g"), 1.0F);
+        final float b = colorComponent(prepared, scope, context, expressions.get("b"), 1.0F);
+        final float a = colorComponent(prepared, scope, context, expressions.get("a"), 1.0F);
         return Math.round(a * 255.0F) << 24
                 | Math.round(r * 255.0F) << 16
                 | Math.round(g * 255.0F) << 8
                 | Math.round(b * 255.0F);
     }
 
-    private static float colorComponent(Scope scope, MoLangEvaluationContext context,
+    private static float colorComponent(Prepared prepared, Scope scope, MoLangEvaluationContext context,
                                         String expression, float fallback) {
         if (expression == null || expression.isBlank()) {
             return fallback;
         }
-        String normalized = expression.trim();
-        if (normalized.endsWith("f") || normalized.endsWith("F")) {
-            normalized = normalized.substring(0, normalized.length() - 1);
-        }
+        String normalized = normalizeColor(expression);
         try {
             return Math.max(0.0F, Math.min(1.0F,
-                    (float) MoLangEngine.eval(scope, context, normalized).getAsNumber()));
+                    (float) evaluateExpression(prepared, scope, context, normalized).getAsNumber()));
         } catch (Throwable throwable) {
             LOGGER.warn("Failed to evaluate render controller color component '{}'", expression, throwable);
             return fallback;
         }
+    }
+
+    private static String normalizeColor(String expression) {
+        String normalized = expression.trim();
+        if (normalized.endsWith("f") || normalized.endsWith("F")) {
+            normalized = normalized.substring(0, normalized.length() - 1);
+        }
+        return normalized;
     }
 
     private record MaterialState(boolean cull, BlendMode blendMode, boolean emissive, boolean glint) {

@@ -38,6 +38,11 @@ public class LayeredScope implements Scope {
         this.parent = parent;
     }
 
+    /** Reuses fixed local bindings while changing only the scope they shadow. */
+    public void rebase(Scope newParent) {
+        this.parent = newParent;
+    }
+
     /**
      * Resets this scope for reuse with a new parent, avoiding new allocation.
      */

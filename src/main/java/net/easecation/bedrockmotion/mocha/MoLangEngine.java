@@ -43,21 +43,34 @@ import java.io.StringReader;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 @SuppressWarnings("UnstableApiUsage")
 public class MoLangEngine {
-    private static final ConcurrentHashMap<String, CompiledExpression> PARSE_CACHE = new ConcurrentHashMap<>();
-    private static final int MAX_CACHE_SIZE = 4096;
-    private static final ThreadLocal<LayeredScope> EVAL_SCOPE =
-            ThreadLocal.withInitial(() -> new LayeredScope(Scope.create()));
-    // Reused per thread instead of allocating a new MutableObjectBinding (and its backing
-    // CaseInsensitiveStringHashMap) on every eval(List) call - that allocation dominated render-thread
-    // GC pressure once keyframe pre-resolution removed the parse churn. MutableObjectBinding has no
-    // clear() and is package-final on its map, so this subclass tracks written temp keys and removes
-    // them after each eval, keeping the (empty in the common case) map allocated and reused.
-    private static final ThreadLocal<ResettableTempBinding> EVAL_TEMP =
-            ThreadLocal.withInitial(ResettableTempBinding::new);
+    private static final Scope STANDARD_SCOPE = standardScope();
+
+    private static Scope standardScope() {
+        Scope scope = Scope.create();
+        scope.set("math", team.unnamed.mocha.runtime.binding.JavaObjectBinding.of(
+                team.unnamed.mocha.runtime.standard.MochaMath.class, null,
+                new team.unnamed.mocha.runtime.standard.MochaMath()));
+        scope.readOnly(true);
+        return scope;
+    }
+
+    /** Fresh host bindings over the immutable standard library; no shared mutable actor variables. */
+    public static Scope newScope() {
+        return new LayeredScope(STANDARD_SCOPE);
+    }
+
+    private static final Map<String, CompiledExpression> COMPILE_CACHE = new LinkedHashMap<>(16, .75f, true);
+    private static final int MAX_CACHE_SIZE = 256;
+    private static final long MAX_CACHE_WEIGHT = 16 * 1024 * 1024;
+    private static long cacheWeight;
+    // One reusable slot per nested evaluation. Callbacks can evaluate another expression without
+    // rebasing the caller's scope or clearing its temporary variables.
+    private static final ThreadLocal<EvaluationStack> EVALUATIONS = ThreadLocal.withInitial(EvaluationStack::new);
 
     public static Value eval(final Scope scope, final String expression) throws IOException {
         return eval(scope, MoLangEvaluationContext.EMPTY, expression);
@@ -69,7 +82,15 @@ public class MoLangEngine {
             return NumberValue.zero();
         }
 
-        // Fast path: numeric literals (e.g. "0", "1.5", "-0.3") skip parse entirely
+        final NumberValue literal = numericLiteral(expression);
+        if (literal != null) return literal;
+        return eval(scope, context, compile(expression));
+    }
+
+    // Preserve the String evaluation fast path when a resource retains a compiled expression.
+    // Number parsing belongs here, not in render-controller or animation consumers.
+    private static NumberValue numericLiteral(String expression) {
+        if (expression.isEmpty()) return null;
         final char first = expression.charAt(0);
         if ((first >= '0' && first <= '9') || first == '-' || first == '.') {
             try {
@@ -79,7 +100,7 @@ public class MoLangEngine {
             }
         }
 
-        return eval(scope, context, compile(expression));
+        return null;
     }
 
     public static Value eval(final Scope scope, final List<Expression> expressions) {
@@ -88,7 +109,7 @@ public class MoLangEngine {
 
     public static Value eval(final Scope scope, final MoLangEvaluationContext context,
                              final List<Expression> expressions) {
-        return evalExpressions(scope, context, isActorAware(context) ? actorAwareExpressions(expressions) : expressions);
+        return eval(scope, context, compile(expressions));
     }
 
     public static Value eval(final Scope scope, final CompiledExpression expression) {
@@ -97,8 +118,8 @@ public class MoLangEngine {
 
     public static Value eval(final Scope scope, final MoLangEvaluationContext context,
                              final CompiledExpression expression) {
-        return evalExpressions(scope, context,
-                isActorAware(context) ? expression.actorAwareExpressions : expression.expressions);
+        if (expression.literal != null) return expression.literal;
+        return evalExpressions(scope, context, isActorAware(context) ? expression.actorAwareExpressions : expression.expressions);
     }
 
     private static boolean isActorAware(MoLangEvaluationContext context) {
@@ -106,12 +127,45 @@ public class MoLangEngine {
                 || context.ownerActor() instanceof MoLangEvaluationContext.Actor);
     }
 
-    private static Value evalExpressions(final Scope scope, final MoLangEvaluationContext context,
-                                         final List<Expression> expressions) {
-        final LayeredScope localScope = EVAL_SCOPE.get();
-        localScope.reset(scope);
-        final ResettableTempBinding tempBinding = EVAL_TEMP.get();
-        tempBinding.resetTemp(); // drop any temp.* written by a previous eval before reuse
+    private static Value evalExpressions(final Scope scope, final MoLangEvaluationContext context, final List<Expression> expressions) {
+        final EvaluationStack stack = EVALUATIONS.get();
+        final EvaluationSlot slot = stack.acquire();
+        try {
+            slot.scope.rebase(scope);
+            final ExpressionInterpreter<Object> evaluator = new ExpressionInterpreter<>(
+                    Objects.requireNonNullElse(context, MoLangEvaluationContext.EMPTY).actor(), slot.scope);
+            evaluator.warnOnReflectiveFunctionUsage(false);
+            Value result = NumberValue.zero();
+            for (Expression expression : expressions) {
+                result = expression.visit(evaluator);
+                Value returned = evaluator.popReturnValue();
+                if (returned != null) return returned;
+            }
+            return result;
+        } finally {
+            slot.temp.resetTemp();
+            slot.scope.rebase(STANDARD_SCOPE); // Do not retain actors/worlds in render-thread locals.
+            stack.depth--;
+        }
+    }
+
+    private static final class EvaluationSlot {
+        final ResettableTempBinding temp = new ResettableTempBinding();
+        final LayeredScope scope = newEvaluationScope(temp);
+    }
+
+    private static final class EvaluationStack {
+        final ArrayList<EvaluationSlot> slots = new ArrayList<>();
+        int depth;
+        EvaluationSlot acquire() {
+            if (depth >= 64) throw new IllegalStateException("Molang host callback nesting exceeds 64");
+            if (depth == slots.size()) slots.add(new EvaluationSlot());
+            return slots.get(depth++);
+        }
+    }
+
+    private static LayeredScope newEvaluationScope(ResettableTempBinding tempBinding) {
+        final LayeredScope localScope = new LayeredScope(STANDARD_SCOPE);
         localScope.set("temp", tempBinding);
         localScope.set("t", tempBinding);
         localScope.set("__actor_variable", (Function<Object>) (execution, arguments) -> {
@@ -123,22 +177,7 @@ public class MoLangEngine {
             return NumberValue.zero();
         });
         localScope.readOnly(true);
-
-        final ExpressionInterpreter<Object> evaluator =
-                new ExpressionInterpreter<>(Objects.requireNonNullElse(context, MoLangEvaluationContext.EMPTY).actor(), localScope);
-        evaluator.warnOnReflectiveFunctionUsage(false);
-
-        Value lastResult = NumberValue.zero();
-        for (Expression expression : expressions) {
-            lastResult = expression.visit(evaluator);
-            Value returnValue = evaluator.popReturnValue();
-            if (returnValue != null) {
-                lastResult = returnValue;
-                break;
-            }
-        }
-
-        return lastResult;
+        return localScope;
     }
 
     /**
@@ -171,25 +210,38 @@ public class MoLangEngine {
     }
 
     /**
-     * Returns an opaque cached AST which can be evaluated concurrently but never exposes the mutable
-     * Mocha nodes it owns.
+     * Parses an owned AST during resource preparation. Host values are read at execution;
+     * the cache retains neither scopes nor actors.
      */
-    public static CompiledExpression compile(final String expression) throws IOException {
-        final CompiledExpression cached = PARSE_CACHE.get(expression);
-        if (cached != null) {
-            return cached;
-        }
-
+    public static synchronized CompiledExpression compile(final String expression) throws IOException {
+        final CompiledExpression cached = COMPILE_CACHE.get(expression);
+        if (cached != null) return cached;
+        if (expression.length() > 262144) throw new IllegalArgumentException("Molang source exceeds 256K character budget");
+        final CompiledExpression compiled;
         try (final StringReader reader = new StringReader(expression)) {
-            final CompiledExpression parsed = new CompiledExpression(parse(reader));
-            if (PARSE_CACHE.size() < MAX_CACHE_SIZE) {
-                final CompiledExpression raced = PARSE_CACHE.putIfAbsent(expression, parsed);
-                if (raced != null) {
-                    return raced;
-                }
-            }
-            return parsed;
+            compiled = new CompiledExpression(parse(reader));
+        } catch (StackOverflowError error) {
+            throw new IllegalArgumentException("Molang parser nesting budget exceeded", error);
         }
+        long weight = compiled.cacheWeight() + expression.length() * 2L;
+        if (weight <= MAX_CACHE_WEIGHT) {
+            while (!COMPILE_CACHE.isEmpty() && (COMPILE_CACHE.size() >= MAX_CACHE_SIZE || cacheWeight + weight > MAX_CACHE_WEIGHT)) {
+                var iterator = COMPILE_CACHE.entrySet().iterator();
+                var old = iterator.next();
+                cacheWeight -= old.getValue().cacheWeight() + old.getKey().length() * 2L;
+                iterator.remove();
+            }
+            COMPILE_CACHE.put(expression, compiled);
+            cacheWeight += weight;
+        }
+        return compiled;
+    }
+
+    /** Retains the literal fast path of eval(String) without changing parse/compile AST shape. */
+    public static CompiledExpression compileForEvaluation(final String expression) throws IOException {
+        final NumberValue literal = numericLiteral(expression);
+        return literal == null ? compile(expression)
+                : new CompiledExpression(List.of(new DoubleExpression(literal.getAsNumber())));
     }
 
     /** Creates an opaque compiled expression detached from a caller-owned AST. */
@@ -204,12 +256,31 @@ public class MoLangEngine {
     public static final class CompiledExpression {
         private final List<Expression> expressions;
         private final List<Expression> actorAwareExpressions;
+        private final NumberValue literal;
 
         private CompiledExpression(final List<Expression> expressions) {
             // Postfix precedence belongs to the Mocha parser. Keep only a detached copy here;
             // the consumer must not rewrite parser output to compensate for parser behavior.
             this.expressions = List.copyOf(MoLangEngine.copyExpressions(expressions));
-            this.actorAwareExpressions = List.copyOf(actorAwareExpressions(this.expressions));
+            this.literal = this.expressions.size() == 1 && this.expressions.getFirst() instanceof DoubleExpression number
+                    ? NumberValue.of(number.value()) : null;
+            this.actorAwareExpressions = literal == null ? List.copyOf(actorAwareExpressions(this.expressions)) : this.expressions;
+        }
+
+        private long cacheWeight() {
+            return 256L + expressions.toString().length() * 8L;
+        }
+
+        /** Installation-time constant query; never evaluates actor bindings or impure calls.
+         * Uses the interpreter's own constant analysis instead of a consumer expression parser.
+         */
+        public java.util.OptionalDouble constantNumber() {
+            for (Expression expression : expressions) {
+                if (!team.unnamed.mocha.runtime.IsConstantExpression.test(expression)) {
+                    return java.util.OptionalDouble.empty();
+                }
+            }
+            return java.util.OptionalDouble.of(MoLangEngine.eval(Scope.create(), this).getAsNumber());
         }
 
         /** Returns a fully detached tree because Mocha's AST nodes and child lists are mutable. */

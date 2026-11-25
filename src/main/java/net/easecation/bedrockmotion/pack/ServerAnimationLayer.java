@@ -229,8 +229,10 @@ public final class ServerAnimationLayer {
                 freezeArrays(source.textures()),
                 freezeArrays(source.geometries()),
                 immutableMap(source.partVisibility()),
+                immutableMap(source.colorExpressions()),
                 source.ignoreLighting(),
-                source.lightColorMultiplier()
+                source.lightColorMultiplier(),
+                source.uvAnim()
         );
     }
 

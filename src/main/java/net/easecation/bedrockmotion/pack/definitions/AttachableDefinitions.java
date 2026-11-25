@@ -1,6 +1,7 @@
 package net.easecation.bedrockmotion.pack.definitions;
 
 import lombok.Getter;
+import net.easecation.bedrockmotion.attachable.AttachableProgram;
 import net.easecation.bedrockmotion.pack.PackManager;
 import net.easecation.bedrockmotion.pack.content.Content;
 import org.cube.converter.data.bedrock.BedrockAttachableData;
@@ -61,6 +62,9 @@ public final class AttachableDefinitions {
     }
 
     public record AttachableDefinition(String identifier, BedrockAttachableData data,
-                                       String sourcePath, int packPriority) {
+                                       String sourcePath, int packPriority, AttachableProgram program) {
+        public AttachableDefinition(String identifier, BedrockAttachableData data, String sourcePath, int packPriority) {
+            this(identifier, data, sourcePath, packPriority, AttachableProgram.compile(data));
+        }
     }
 }

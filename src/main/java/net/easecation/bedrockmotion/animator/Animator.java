@@ -28,6 +28,7 @@ public class Animator {
     private final AnimationDefinitions.AnimationData data;
     private final AnimationClock clock;
     private final MoLangEngine.CompiledExpression animationTimeUpdate;
+    private final String[] overrideBones;
 
     private long animationStartMS;
     private long animationCompletedMS;
@@ -63,6 +64,8 @@ public class Animator {
         this.listener = listener;
         this.data = data;
         this.clock = clock;
+        this.overrideBones = data.animation().isResetBeforePlay()
+                ? data.compiled().boneAnimations().keySet().toArray(String[]::new) : new String[0];
 
         final String timeUpdate = data.animation().getTimePassExpression();
         try {
@@ -160,12 +163,7 @@ public class Animator {
      */
     public void animate(IBoneModel model, boolean fireEvents) throws IOException {
         if (fireEvents) {
-            final boolean wasStarted = this.started;
             this.advance();
-            if (!wasStarted && this.started && this.data.animation().isResetBeforePlay()) {
-                model.resetAllBones();
-                this.TEMP_VEC.set(0);
-            }
         }
         sample(model);
     }
@@ -175,14 +173,14 @@ public class Animator {
             return;
         }
 
-        final long elapsedMillis = sampleTimeMillis();
+        final float elapsedSeconds = sampleTimeSeconds();
 
         // baseScope already contains complete query bindings from buildFrameScope().
         // Only overlay animation-specific anim_time/life_time.
         reusableScope.reset(this.baseScope);
         final Scope scope = reusableScope;
 
-        float runningTime = AnimationHelper.getRunningSeconds(data.animation(), data.compiled(), elapsedMillis);
+        float runningTime = AnimationHelper.runningSeconds(data.compiled(), elapsedSeconds);
 
         // Override life_time and anim_time with animation-specific values (not entity lifetime)
         // Reuse OverlayBinding instance to avoid per-frame allocation
@@ -194,8 +192,14 @@ public class Animator {
 
         // Use IBoneModel's own lazily-built bone index (cached permanently by McBoneModel)
         Map<String, IBoneTarget> boneIndex = model.getBoneIndex();
+        // override_previous_animation is a per-layer sampling rule, not a first-start event.
+        // Reset only named bones, before any channel (including `this`) reads the lower pose.
+        for (String name : overrideBones) {
+            IBoneTarget bone = boneIndex.get(name);
+            if (bone != null) bone.resetForAnimationOverride();
+        }
 
-        AnimationHelper.animate(scope, this.evaluationContext, model, data.compiled(), elapsedMillis,
+        AnimationHelper.animateAtSeconds(scope, this.evaluationContext, model, data.compiled(), elapsedSeconds,
                 this.blendWeight, TEMP_VEC, boneIndex);
     }
 
@@ -203,8 +207,7 @@ public class Animator {
         if (!this.started || (this.donePlaying && !completedNow && !this.completionEventsPending)) {
             return;
         }
-        final long elapsedMillis = sampleTimeMillis();
-        final float runningTimeWithoutLoop = elapsedMillis / 1000F;
+        final float runningTimeWithoutLoop = sampleTimeSeconds();
         final float previousEventTime = runningTimeWithoutLoop < this.lastEventSampleTime
                 ? -Float.MIN_VALUE : this.lastEventSampleTime;
         this.tickTimeline(previousEventTime, runningTimeWithoutLoop);
@@ -291,14 +294,14 @@ public class Animator {
         this.lastEventSampleTime = -Float.MIN_VALUE;
     }
 
-    private long sampleTimeMillis() {
+    private float sampleTimeSeconds() {
         if (this.donePlaying && data.compiled().lengthInSeconds() > 0) {
-            return Math.round(data.compiled().lengthInSeconds() * 1000.0F);
+            return data.compiled().lengthInSeconds();
         }
         if (this.animationTimeUpdate == null) {
-            return clock.timeMillis() - this.animationStartMS;
+            return (clock.timeMillis() - this.animationStartMS) / 1000.0F;
         }
-        return Math.round(updateCustomAnimationTime() * 1000.0F);
+        return updateCustomAnimationTime();
     }
 
     private float updateCustomAnimationTime() {
